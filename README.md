@@ -311,15 +311,72 @@ func (db *DB) Sync() error
 
 
 
-### WriteBatch以及事务支持
+### WriteBatch事务机制
+
+​	   在本数据库中并没有采用MVCC的事务机制，几个原因：1) 编码比较复杂，感觉没必要  2） 对于本数据库而言并不需要非常高的并发，因为agent对数据读取性能并不会有太高的要求，3)  因为bitcask数据库是将索引保存在内存中的，如果对每一个事务都维护相应的快照一旦事务数量增多会导致内存急剧膨胀（说实话我感觉还好，因为无论如何都要在内存里面开辟未提交事务的暂存空间）。
+
+​		本系统仅仅实现一个较为简单的事务系统：全局锁保证串行化。事务的大体处理方法如下：
+
+* step1：往暂存区中存入数据（无论是删除还是增加对于本数据模型都是往记录中添加数据），暂存区位于内存中
+* step2：Commit，将暂存区中的数据存入活跃文件中
+* step3：根据事务序号判断该事物时候完成，若完成则更新内存索引详细设计
+
+​		为了保证事务的串行化，我们给每一个事务唯一的标识，seqNo，由数据库实例维护。在任何一个key插入数据库时需要拼接事务前缀。下图是维护事物的大致流程：
+
+![transaction](image/transaction.png)
+
+​
 
 
+
+​	用户采用WriteBatch结构所提供的接口向PendingWrite暂存区中存入LogRecord数据，如果这部分内容不进行Commit操作，在数据库重启之后将全部丢失。Commit之后无论是Put操作还是Delete操作都会在Active File中添加对应LogRecord，此时数据对于用户来说依然不可达，我们需要对索引进行更新。
+
+​	 首先需要将datafile加载到内存中，我们需要区分事务操作与非事物操作，如果是非事务操作就可以直接更新索引，如果是事务操作，判断是否是Fin事务终止标识，如果是就将txnId中的所有事物生效，如果不是终止标识就将操作暂存在Transaction区。
+
+![finishedTxn](image/finishedTxn.png)
 
 ---
 
-### Merge操作
+​	这里是位于Disk中事务分布的例子：第一个Transaction由于没有终止标识说明事务失败并不会对索引进行更新，只有第二个Transaction是有效的。
 
----
+```go
+type WriteBatch struct {
+	options WriteBatchOptions
+	mu      *sync.Mutex
+	db      *DB
+	// 暂存用户写入的LogRecord
+	pendingWrite map[string]*data.LogRecord
+}
+
+func (wb *WriteBatch) Put(key []byte, value []byte) error {
+	// 加锁
+	// 暂存LogRecord
+}
+
+func (wb *WriteBatch) Delete(key []byte) error {
+    // 加锁
+	// 数据不存在就直接返回
+		// 如果暂存区有数据就直接删除
+	// 也是将LogRecord暂存起来
+}
+
+// Commit 提交事务，将批量数据全部写到磁盘并且更新索引
+func (wb *WriteBatch) Commit() error {
+    // 加锁
+	// 如果暂存区中没有数据就无法进行Commit
+	// 如果暂存区中的数据超过了最大数据量
+	// 获取当前事务的序列号,需要原子写入
+    // 暂存数据，以此来批量更新内存索引
+		// 将附带有事务序列的Key写入活跃文件
+	// 加上标识事务完成的数据
+	// 写入事务完成数据（不需要加锁，因为事务Commit本身就需要加锁）
+	// 根据配置进行持久化
+	// 更新内存索引
+	// 清空暂存数据
+}
+
+```
+
 
 
 ### 内存索引、IO的优化
