@@ -66,7 +66,6 @@ type BtreeIterator struct {
 	currIndex int     // 当前的位置
 	reverse   bool    // 是否为反向的遍历
 	values    []*Item // key 位置索引的信息
-
 }
 
 // todo: 这个地方有一个问题就是数据结构BTree的迭代器是不能满足我们的需求的，所以我们需要把数据全部从数据结构里面取出来，这会导致内存膨胀（Double time）

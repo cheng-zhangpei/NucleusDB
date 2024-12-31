@@ -8,6 +8,7 @@
 - 帮助运维工程师快速完成较为复杂任务的部署。比如mysql等，提高云原生工程师的工作便捷与效率
 - 可以通过webhook监控集群数据，对于一些崩溃的应用，智能体能够读取日志内容并尝试修复较为简单的问题，提高应用的可恢复性。而不只是按照k8s的策略不断对应用进行重启
 - 本系统暂时的设计受众是小型的开发团队对于大型团队功能需要进一步加强
+- 对未来的期待：时候可以让agent系统控制一个数据中心从而打通软件工程从需求分析=> 资源部署 => coding => 应用部署 => 后期维护的全流程？从而实现软件开发完全由多智能体系统取代？权当(｡･∀･)ﾉﾞ自嗨
 
 ---
 
@@ -18,7 +19,7 @@
 2. **针对运维/复杂环境下的多智能体框架探索**
 3. **在云原生下的多智能体协作架构与框架适配**
 4. **多智能体运维系统的搭建**
-5. **云原生环境下的部署简化以及集群内核兼容**
+5. **云原生环境下的部署简化以及集群K8S兼容**
 
 ---
 
@@ -192,9 +193,9 @@ step4: return the pos of memory index
 * step3: 更新偏移量令其指向下一个LogRecord
 * step4: 当前的文件是活跃文件，需要更新活跃文件的索引, 此处的索引是最新的索引。
 
-#### 数据文件读写
+#### 数据文件读写与LogRecord编码
 
-![logRecord](image/logrecord.png)
+![](./image/logrecord.png)
 
 * Header：头部信息包括CRC校验和，Type类型，KeySize键大小，ValueSize值大小。我们在读取数据的时候会先读取固定长度的头部Header以获取键值的大小。key Size 与Value Size是全为变长的，所以这个地方我们设置了一个Header固定读取长度（设置为15字节），反序列化的时候如果存在多余的字节就会被忽略，这样设计是为了节省磁盘的空间。
 * 注意事项：使用固定的长度的头部读取方式在最后一个LogRecord读取的时候可能会出现对齐问题，此处的logRecord的读取需要注意一下。从后往前的找到这个位置的头部偏移。
@@ -205,11 +206,121 @@ step4: return the pos of memory index
 
 ### Close、Sync、迭代器
 
+#### 迭代器Iterator
 
+​	为了用户可以更加方便的对数据进行方法，本数据库实现了基础的迭代器。我们对迭代器进行了两层的封装。1. 系统级别面向索引的迭代器。2.面向用户的迭代器。
+
+* 面向索引的迭代器
+
+```go
+type Iterator interface {
+	Rewind()                   // 重新回到迭代器起点
+	Seek(key []byte)           // 根据传入的key查找到第一个大于或者小于等于目标Key，从这个Key开始遍历
+	Next()                     // 跳转到下一个key
+	Valid() bool               // 是否有效，即是否已经遍历完所有的key
+	Key() []byte               // 当前遍历位置的Key数据
+	Value() *data.LogRecordPos // 当前遍历位置的value数据
+	Close()                    // 关闭迭代器释放资源
+}
+
+type BtreeIterator struct {
+	currIndex int     // 当前的位置
+	reverse   bool    // 是否为反向的遍历
+	values    []*Item // key 位置索引的信息
+}
+```
+
+​	为了适配多种不同类型的索引类型，我们需要先定义一个统一的抽象迭代器接口以适配不同类型索引。如果使用B树作为索引，我们需要在B树的基础上再次对索引迭代器进行封装。这里初始化的内容有些不一样需要将树的结构转化到数组中以满足我们对迭代器的需要
+
+```go
+func NewBtreeIterator(tree *btree.BTree, reverse bool) *BtreeIterator {
+	var idx int
+	values := make([]*Item, tree.Len())
+	// 将所有的数据都放到Values数组里面去
+	saveValues := func(it btree.Item) bool {
+		values[idx] = it.(*Item)
+		idx++
+		return true
+	}
+	if reverse {
+		tree.Descend(saveValues)
+	} else {
+		tree.Ascend(saveValues)
+	}
+	return &BtreeIterator{
+		currIndex: 0,
+		reverse:   reverse,
+		values:    values,
+	}
+}
+```
+
+​	此处初始化其实是有一些缺陷的，由于是直接使用别的的库所提供的方法无法符合我们对迭代器的要求，所以我们需要把树中的内容加载到数组中，这样其实是会导致内存膨胀比较快。具体上方的接口实现此处不表。
+
+* 用户迭代器接口
+
+  ```go
+  type Iterator struct {
+  	indexIter index.Iterator
+  	db        *DB
+  	options   IteratorOptions
+  }
+  type IteratorOptions struct {
+  	// 遍历前缀为指定前缀的Key
+  	Prefix []byte
+  	// 是否可逆
+  	Reverse bool
+  }
+  ```
+
+​	用户迭代器其实是对内存索引迭代器的进一步封装，使其对用户更加友好。在此基础上为了满足后续检索的需要，这里添加了对前缀的适配。后续可以在迭代器层面添加搜索功能，让智能体能够操作迭代器进行记忆空间检索。前缀功能的实现，这只是一个范例，查找的方法都要加上这个前缀的匹配：
+
+```go
+// Rewind 回到初始位置
+func (it *Iterator) Rewind() {
+	it.indexIter.Rewind()
+	it.skipToNext()// -> 		if prefixLen < len(key) && bytes.Compare(key[:prefixLen], it.options.Prefix) == 0 这个函数其实就是实现了一个前缀对比，如果前缀不符合就控制currIndex不断的调到Next数组上
+}
+```
+
+​		两个封装的方法用于在数据库层增强用户的体验：
+
+```go
+// ListKey 将所有Key给列出来
+func (db *DB) ListKeys() [][]byte
+// Fold 对数据库中的所有的数据进行指定的操作，只要用户传入bool=True，Fold就会遍历所有数据执行fn
+func (db *DB) Fold(fn func(key []byte, value []byte) bool) error
+```
+
+#### Close、Sync
+
+​	这个比较简单就不需要太多解释了
+
+```go
+func (db *DB) Close() error {
+	// 关闭当前的活跃文件
+    // 遍历关闭所有的非活跃文件
+}
+
+// Sync 持久化活跃文件
+func (db *DB) Sync() error 
+// 这里需要注意！在数据库层的操作一定要注意加锁！不然会出大事
+```
+
+---
+
+
+
+### WriteBatch以及事务支持
 
 
 
 ---
+
+### Merge操作
+
+---
+
 
 ### 内存索引、IO的优化
 
