@@ -9,4 +9,5 @@ var (
 	ErrDataFileNotFound       = errors.New("data file not found")
 	ErrDataDirectoryCorrupted = errors.New("the directory may be corrupted")
 	ErrExceedMaxBatchNum      = errors.New("max batch num exceeded")
+	ErrMergeIsProcessing      = errors.New("merge is processing")
 )

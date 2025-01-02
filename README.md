@@ -323,17 +323,15 @@ func (db *DB) Sync() error
 
 ​		为了保证事务的串行化，我们给每一个事务唯一的标识，seqNo，由数据库实例维护。在任何一个key插入数据库时需要拼接事务前缀。下图是维护事物的大致流程：
 
-![transaction](image/transaction.png)
+![transaction](D:\czp\毕设开发日志\mdfile\graph\transaction.png)
 
 ​
-
-
 
 ​	用户采用WriteBatch结构所提供的接口向PendingWrite暂存区中存入LogRecord数据，如果这部分内容不进行Commit操作，在数据库重启之后将全部丢失。Commit之后无论是Put操作还是Delete操作都会在Active File中添加对应LogRecord，此时数据对于用户来说依然不可达，我们需要对索引进行更新。
 
 ​	 首先需要将datafile加载到内存中，我们需要区分事务操作与非事物操作，如果是非事务操作就可以直接更新索引，如果是事务操作，判断是否是Fin事务终止标识，如果是就将txnId中的所有事物生效，如果不是终止标识就将操作暂存在Transaction区。
 
-![finishedTxn](image/finishedTxn.png)
+![finishedTxn](D:\czp\毕设开发日志\mdfile\graph\finishedTxn.png)
 
 ---
 
@@ -377,6 +375,28 @@ func (wb *WriteBatch) Commit() error {
 
 ```
 
+### Merge
+
+​	在数据库运行的过程中，由于bitcask实例无论是删除数据还是添加数据本质都是往磁盘中进行写入数据，这就会导致数据不断的堆积。所以bitcask论文中提出了一种merge的方法，但是由于论文中很多细节没有进行描述所以本节对Merge的内容进行详细的设计：
+
+​	Merge主要有两个功能，分别是清理无效数据、生成hint索引文件减小索引构建过程中的内存占用量。
+
+* 清理无效数据：
+
+  ​	思路并不困难，将所有数据文件中所有的记录全部遍历一遍，只要这个记录可以在内存索引中找到相一致的数据就一定是有效数据，将有效数据put到新的文件中就ok。但是这样会诱发锁竞争，用户与merge操作争抢Put锁。而且merge过程是不能中断的过程，但如果将merge的过程放到事务中，如果用户将数据文件大小设置的非常大，在commit之前就会导致有一大堆的操作无法执行，导致内存激增（上图的pendingWrite区）。
+
+  ​	方法：系统使用了一个临时merge文件夹并在这个文件夹中启动了另外一个数据库实例，该实例将数据从原始的数据目录中读出之后与内存索引进行比较，如果数据有效就放入merge文件夹中。
+
+* hint文件生产 :
+
+​		hint文件其实就是LogRecord中的value其实就是一个LogRecordPos（内存索引）。在数据库启动的时候，会遍历hint文件并将LogRecord中的value数据作为index插入内存索引中。
+
+* 重启merge校验：
+
+​		merge有可能因为一些原因导致merge中断，所以在mergeDir中添加了mergeFinished文件，在进行merge操作之前需要先判断是否有未完成的merge操作，如果没有mergeFinished文件说明存在没完成的merge操作。该文件中需要保存一条logRecord，内容是记录了没有被Merge的最小的数据文件。因为在merge的过程中依然可能会有数据被添加，且需要在merge的过程中删除旧的数据文件，所以需要一个数据文件的分界线。
+
+​	![MergeDetail](image/MergeDetail.png)
+
 
 
 ### 内存索引、IO的优化
@@ -393,23 +413,27 @@ func (wb *WriteBatch) Commit() error {
 
 ---
 
-### Redis格式支持
+### Redis格式、Redis协议支持
 
 
 
 ------------------
 
-### 搜索算法与实现
+### 记忆搜索算法与实现
 
 ------------------
 
 ### Raft共识算法
 
+todo：看兴趣后面有时间的话可以做
+
 ------------
 
 ### Sharking分片
 
+todo：看兴趣后面有时间的话可以做
 
+------------
 
 
 

@@ -8,6 +8,7 @@ import (
 	_ "gopkg.in/check.v1"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ type DB struct {
 	options    Options                   // 数据库配置
 	index      index.Indexer
 	seqNo      uint64 // 当前事务的序列号，事务的序列号是全局递增的
+	isMerging  bool
 }
 
 func Open(options Options) (*DB, error) {
@@ -43,10 +45,19 @@ func Open(options Options) (*DB, error) {
 		olderFile: make(map[uint32]*data.DataFile),
 		index:     index.NewIndexer(options.IndexerType),
 	}
+	// 加载merge数据目录
+	if err := db.loadMergeFiles(); err != nil {
+		return nil, err
+	}
 	// 加载数据文件 => 其实就是将用户指定目录下的数据文件给放到数据库项中可以识别到文件标识符
 	if err := db.loadDataFiles(); err != nil {
 		return nil, err
 	}
+	// 查看目录中是否有hint文件，如果有就在这个目录下加载索引
+	if err := db.loadIndexFromHintFile(); err != nil {
+		return nil, err
+	}
+
 	// 从数据文件中加载索引的方法 => 在内存中建立BTree
 	if err := db.loadIndexFromDataFiles(); err != nil {
 		return nil, err
@@ -329,10 +340,24 @@ func (db *DB) loadIndexFromDataFiles() error {
 	if len(db.fileIds) == 0 {
 		return nil
 	}
+	// 是否发生过merge
+	hasMerge, nonMergeFileId := false, uint32(0)
+	mergeFinishedName := filepath.Join(db.options.DirPath, data.MergeFinishedFileName)
+	if _, err := os.Stat(mergeFinishedName); err == nil {
+		// 拿到最近没有参与merge的ID
+		fileId, err := db.getNonMergeFileId(db.options.DirPath)
+		if err != nil {
+			return err
+		}
+		hasMerge = true
+		nonMergeFileId = fileId
+	}
+
 	// 暂存事务数据-> 需要存储事务信息以及LogRecord本身
 	// 结构: seqNo -> [transactionRecord0,transactionRecord1,transactionRecord2...]
 	transactionRecords := make(map[uint64][]*data.TransactionRecord)
 	var currentSeqNo uint64 = nonTransactionSeqNo
+
 	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
 		if typ == data.LogRecordDeleted {
 			// 将其从索引中删除
@@ -351,6 +376,9 @@ func (db *DB) loadIndexFromDataFiles() error {
 	// 遍历并取出文件的内容
 	for i, fid := range db.fileIds {
 		var fileId = uint32(fid)
+		if hasMerge && fileId < nonMergeFileId {
+			continue
+		}
 		var dataFile *data.DataFile
 		if fileId == db.activeFile.FileId {
 			dataFile = db.activeFile

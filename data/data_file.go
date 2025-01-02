@@ -11,6 +11,8 @@ import (
 )
 
 const DataFileNameSuffix = ".data"
+const HintFileName = "hint-index"
+const MergeFinishedFileName = "merge-finished"
 
 // crc type keySize valueSize 4 + 1 + 5 + 5 = 15 binary.MaxVarintLen32其实标识的就是两个变化大小的常量key、value的size
 const maxLogRecordHeaderSize = binary.MaxVarintLen32*2 + 5
@@ -28,8 +30,27 @@ type DataFile struct {
 
 // OpenDataFile 初始化并打开数据文件
 func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
-	fileName := filepath.Join(dirPath, fmt.Sprintf("%09d", fileId)+DataFileNameSuffix)
-	// 初始化IOManager
+	fileName := GetDataFileName(dirPath, fileId)
+	return NewDataFile(fileName, fileId)
+}
+
+// OpenHintDataFile 打开hint文件
+func OpenHintDataFile(dirPath string) (*DataFile, error) {
+	fileName := filepath.Join(dirPath, HintFileName)
+	return NewDataFile(fileName, 0)
+}
+
+// OpenMergeFinishedFile 打开标识merge fin的文件
+func OpenMergeFinishedFile(dirPath string) (*DataFile, error) {
+	fileName := filepath.Join(dirPath, MergeFinishedFileName)
+	return NewDataFile(fileName, 0)
+}
+
+func GetDataFileName(dirPath string, fileId uint32) string {
+	return filepath.Join(dirPath, fmt.Sprintf("%09d", fileId)+DataFileNameSuffix)
+}
+
+func NewDataFile(fileName string, fileId uint32) (*DataFile, error) {
 	ioManager, err := fio.NewIOManager(fileName)
 	if err != nil {
 		return nil, err
@@ -55,6 +76,17 @@ func (df *DataFile) Write(buf []byte) error {
 	df.WritOff += int64(n)
 	// 这个地方有一个很小心的地方我们每次读取的时候都是读取MaxHeaderSize这样会导致如果最后一个位置的数据不到axHeaderSize会出现异常
 	return nil
+}
+
+func (df *DataFile) WriteHintFile(key []byte, pos *LogRecordPos) error {
+
+	record := &LogRecord{
+		Key: key,
+		// 涉及到写入的操作肯定是需要对LogRecordPos进行编码的
+		Value: EncodeLogRecordPos(pos),
+	}
+	encLogRecord, _ := EncodeLogRecord(record)
+	return df.Write(encLogRecord)
 }
 
 // ReadLogRecord 根据偏移读取具体的LogRecord==> 自己写go的习惯一直不是非常好，这个地方要记得自己

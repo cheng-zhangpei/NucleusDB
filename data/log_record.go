@@ -74,6 +74,18 @@ func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
 	return encBytes, int64(size)
 }
 
+// 对logRecordPos进行编码的方法
+func EncodeLogRecordPos(logRecordPos *LogRecordPos) []byte {
+	// 只有Fid和offset两个字段
+	buf := make([]byte, binary.MaxVarintLen32+binary.Size(logRecordPos))
+	var index = 0
+	// 这个变长编码的确是需要注意的，还是需要写熟练一些
+	index += binary.PutVarint(buf[index:], int64(logRecordPos.Fid))
+	index += binary.PutVarint(buf[index:], logRecordPos.Offset)
+	// 只返回有效部分的数据，这个方法还是要注意的
+	return buf[:index]
+}
+
 func DecodeLogRecordHeader(buf []byte) (*LogRecordHeader, int64) {
 	if len(buf) <= 4 {
 		return nil, 0
@@ -96,6 +108,19 @@ func DecodeLogRecordHeader(buf []byte) (*LogRecordHeader, int64) {
 	index += n
 
 	return header, int64(index)
+}
+
+// DecodeLogRecordPos 对LogRecordPos进行解码
+func DecodeLogRecordPos(buf []byte) *LogRecordPos {
+	var index = 0
+	fileId, i := binary.Varint(buf[index:]) // 解码出第一个binary变长变量
+	index += i
+	offset, n := binary.Varint(buf[index:])
+	index += n
+	return &LogRecordPos{
+		Fid:    uint32(fileId),
+		Offset: offset,
+	}
 }
 
 // 获得LogRecord的校验信息: 在校验的时候从第四个字节开始往后进行校验
