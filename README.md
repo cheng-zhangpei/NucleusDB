@@ -323,7 +323,7 @@ func (db *DB) Sync() error
 
 ​		为了保证事务的串行化，我们给每一个事务唯一的标识，seqNo，由数据库实例维护。在任何一个key插入数据库时需要拼接事务前缀。下图是维护事物的大致流程：
 
-![transaction](D:\czp\毕设开发日志\mdfile\graph\transaction.png)
+![transaction](image/transaction.png)
 
 ​
 
@@ -331,7 +331,7 @@ func (db *DB) Sync() error
 
 ​	 首先需要将datafile加载到内存中，我们需要区分事务操作与非事物操作，如果是非事务操作就可以直接更新索引，如果是事务操作，判断是否是Fin事务终止标识，如果是就将txnId中的所有事物生效，如果不是终止标识就将操作暂存在Transaction区。
 
-![finishedTxn](D:\czp\毕设开发日志\mdfile\graph\finishedTxn.png)
+![finishedTxn](image/finishedTxn.png)
 
 ---
 
