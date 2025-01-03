@@ -22,6 +22,16 @@ type WriteBatch struct {
 
 // NewWriteBatch  初始化
 func (db *DB) NewWriteBatch(options WriteBatchOptions) *WriteBatch {
+	// 需要加上b+树索引的限制
+	// 如果序列文件不存在并且不是第一次启动的时候序列文件不存在
+	//这里稍微注意一下使用的条件：
+	//1. 索引是B+Tree
+	//2. 不是第一次加载（第一次加载的时候不会生成事务序列号，无法初始化db的任务序列号）
+	//3. 不是首次加载，因为序列号文件是第一次数据库实例关闭之后才会生成
+	//综上，如果不是首次加载，是可以使用B+树索引
+	if db.options.IndexerType == BPTree && !db.seqNoExist && !db.isInitial {
+		panic("cannot use write batch ,seq no file exist")
+	}
 	return &WriteBatch{
 		options:      options,
 		mu:           new(sync.Mutex),

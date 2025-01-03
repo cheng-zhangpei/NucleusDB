@@ -175,6 +175,9 @@ func (db *DB) loadMergeFiles() error {
 		if entry.Name() == data.MergeFinishedFileName {
 			mergeFinished = true
 		}
+		if entry.Name() == data.SeqNoFileName {
+			continue
+		}
 		mergeFileName = append(mergeFileName, entry.Name())
 	}
 	// 没有merge标识符

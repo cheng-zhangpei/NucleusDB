@@ -323,7 +323,7 @@ func (db *DB) Sync() error
 
 ​		为了保证事务的串行化，我们给每一个事务唯一的标识，seqNo，由数据库实例维护。在任何一个key插入数据库时需要拼接事务前缀。下图是维护事物的大致流程：
 
-![transaction](image/transaction.png)
+![transaction](D:\czp\毕设开发日志\mdfile\graph\transaction.png)
 
 ​
 
@@ -331,7 +331,7 @@ func (db *DB) Sync() error
 
 ​	 首先需要将datafile加载到内存中，我们需要区分事务操作与非事物操作，如果是非事务操作就可以直接更新索引，如果是事务操作，判断是否是Fin事务终止标识，如果是就将txnId中的所有事物生效，如果不是终止标识就将操作暂存在Transaction区。
 
-![finishedTxn](image/finishedTxn.png)
+![finishedTxn](D:\czp\毕设开发日志\mdfile\graph\finishedTxn.png)
 
 ---
 
@@ -395,13 +395,69 @@ func (wb *WriteBatch) Commit() error {
 
 ​		merge有可能因为一些原因导致merge中断，所以在mergeDir中添加了mergeFinished文件，在进行merge操作之前需要先判断是否有未完成的merge操作，如果没有mergeFinished文件说明存在没完成的merge操作。该文件中需要保存一条logRecord，内容是记录了没有被Merge的最小的数据文件。因为在merge的过程中依然可能会有数据被添加，且需要在merge的过程中删除旧的数据文件，所以需要一个数据文件的分界线。
 
-​	![MergeDetail](image/MergeDetail.png)
+​	![MergeDetail](D:\czp\毕设开发日志\mdfile\graph\MergeDetail.png)
 
+​	说实话我干辣椒这种merge的方法也是相当消耗内存的
 
+### 内存索引优化、IO优化、merge优化
 
-### 内存索引、IO的优化
+#### 内存索引优化
 
+* ART（自适应基数树索引）
 
+​	自适应基数树（Adaptive Radix Tree, ART）是一种高效的内存索引结构，是传统前缀树（Trie）的优化版本。它通过动态调整节点类型和结构，显著减少了内存占用并提高了查询性能。ART 的核心思想是根据键的分布和密度，自动选择最适合的节点类型（如 4 位、8 位、16 位节点等），从而在时间和空间效率之间取得平衡。之前我们实现了Indexer的索引抽象接口从而我们可以很便捷的接入新的索引类型。
+
+```go
+// 自适应基数树索引
+type AdaptiveRadixTree struct {
+	tree goart.Tree
+	lock *sync.RWMutex
+}
+
+type ARTIterator struct {
+	currIndex int     // 当前的位置
+	reverse   bool    // 是否为反向的遍历
+	values    []*Item // key 位置索引的信息
+}
+
+func NewAdaptiveRadixTree() *AdaptiveRadixTree
+// Put Pur put向索引中存储的key对应的数据位置信息
+func (art *AdaptiveRadixTree) Put(key []byte, pos *data.LogRecordPos)
+// Get 根据key取出信息
+func (art *AdaptiveRadixTree) Get(key []byte) *data.LogRecordPos 
+// Delete 删除信息
+func (art *AdaptiveRadixTree) Delete(key []byte) bool 
+// Iterator 索引迭代器
+func (art *AdaptiveRadixTree) Iterator(reverse bool) Iterator
+// 关闭索引 清理空间
+func (art *AdaptiveRadixTree) Close() error
+```
+
+* B+树持久化索引
+
+​		在key数量非常庞大的时候，若使用内存索引将占用大量的内存空间，故此处引入磁盘索引。本系统采用持久化的B+树来作为磁盘索引。当然这里肯定是不会自己从头开始写磁盘索引的，所以引入了Boltdb(https://github.com/etcd-io/bbolt)作为磁盘索引的底座。
+
+​		B+树索引的引入会对之前设计的事务机制产生影响。序列号是在数据文件加载到内存中构建索引这一步完成的，如果采用磁盘索引此处就无法获取当前事务的序列号。无法获得事务的序列号就会导致串行事务的Commit失效。现在有两种解决方案：
+
+1） 在B + 树索引模式下直接禁用事务
+
+2） 还是加载文件获取序列号，也就是在构建B+树之间先构建一次内存索引获取序列号之后删除
+
+​		本系统采用了一种折中的办法，在DB关闭连接Close()的时候保存当前的序列号，后续构建索引的时候只需要加载序列号文件就好了。但是这也会导致在数据库首次启动时或者是上一个数据库实例没有调用Close方法进行资源释放时事务机制无法使用。（其实后面认真想这个方法感觉很奇怪欸，有点类似于预热？还是蛮有意思的）
+
+* 细粒度索引优化（todo，等基本功能完成了看情况做）
+
+​		由于之前的设计，系统中只有一个索引表，在高并发的情况下，锁的竞争将会导致性能瓶颈。所以我们可以将锁的粒度降低一个层次。从而降低锁的竞争程度。下面是一个解决方案：
+
+​		我们使用hash表给每一个索引编号（Hash取模），这样一个进程可以同时竞争多把索引的锁从而缓解并发的压力。
+
+​		![optim-index](image/optim-index.png)
+
+​	这样迭代器也需要优化，因为之前迭代器都是每一个索引自己维护的，所以现在要想办法把所有的Index给抽象整合到一个数组里面。这个地方开始想起来408外排的败者树(QAQ在这里等着是吧), 但是大可不必，这里用一个最小堆or最大堆应该就可以维护了还是比较easy的。
+
+#### IO优化
+
+#### merge优化
 
 
 
@@ -420,6 +476,8 @@ func (wb *WriteBatch) Commit() error {
 ------------------
 
 ### 记忆搜索算法与实现
+
+#todo：必做
 
 ------------------
 

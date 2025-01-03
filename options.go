@@ -28,6 +28,7 @@ type IndexerType = int8
 const (
 	BTree IndexerType = iota + 1
 	ARTree
+	BPTree
 )
 
 // DefaultOptions 一个默认的options
@@ -35,7 +36,7 @@ var DefaultOptions = Options{
 	DirPath:      os.TempDir(),
 	DataFileSize: 256 * 1024 * 1024,
 	SyncWrite:    true,
-	IndexerType:  BTree,
+	IndexerType:  BPTree,
 }
 
 // DefaultIteratorOptions 一个默认的索引迭代器

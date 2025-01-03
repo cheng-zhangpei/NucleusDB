@@ -13,6 +13,7 @@ import (
 const DataFileNameSuffix = ".data"
 const HintFileName = "hint-index"
 const MergeFinishedFileName = "merge-finished"
+const SeqNoFileName = "seq-no"
 
 // crc type keySize valueSize 4 + 1 + 5 + 5 = 15 binary.MaxVarintLen32其实标识的就是两个变化大小的常量key、value的size
 const maxLogRecordHeaderSize = binary.MaxVarintLen32*2 + 5
@@ -44,6 +45,11 @@ func OpenHintDataFile(dirPath string) (*DataFile, error) {
 func OpenMergeFinishedFile(dirPath string) (*DataFile, error) {
 	fileName := filepath.Join(dirPath, MergeFinishedFileName)
 	return NewDataFile(fileName, 0)
+}
+
+// OpenSeqNoFile 打开一个序列号文件
+func OpenSeqNoFile(dirPath string) (*DataFile, error) {
+	return NewDataFile(filepath.Join(dirPath, SeqNoFileName), 0)
 }
 
 func GetDataFileName(dirPath string, fileId uint32) string {

@@ -15,6 +15,8 @@ import (
 	"sync"
 )
 
+const seqNoKey = "seq-no-key"
+
 // DB bitcask db instance
 type DB struct {
 	mu         *sync.RWMutex
@@ -24,7 +26,9 @@ type DB struct {
 	options    Options                   // 数据库配置
 	index      index.Indexer
 	seqNo      uint64 // 当前事务的序列号，事务的序列号是全局递增的
-	isMerging  bool
+	isMerging  bool   // 是否当前正在进行merge操作
+	seqNoExist bool   // 是否存在序列号文件--> 这个文件是在数据库关闭的时候才会生成
+	isInitial  bool   // 是否是第一次初始化
 }
 
 func Open(options Options) (*DB, error) {
@@ -32,18 +36,29 @@ func Open(options Options) (*DB, error) {
 	if err := checkOption(options); err != nil {
 		return nil, err
 	}
+	var isInitial bool
+
 	// 判断数据目录是否存在
 	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
+		isInitial = true
 		if err := os.MkdirAll(options.DirPath, os.ModePerm); err == nil {
 			return nil, err
 		}
+	}
+	dir, err := os.ReadDir(options.DirPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(dir) == 0 {
+		isInitial = true
 	}
 	// 初始化db
 	db := &DB{
 		options:   options,
 		mu:        new(sync.RWMutex),
 		olderFile: make(map[uint32]*data.DataFile),
-		index:     index.NewIndexer(options.IndexerType),
+		index:     index.NewIndexer(options.IndexerType, options.DirPath, options.SyncWrite),
+		isInitial: isInitial,
 	}
 	// 加载merge数据目录
 	if err := db.loadMergeFiles(); err != nil {
@@ -53,25 +68,62 @@ func Open(options Options) (*DB, error) {
 	if err := db.loadDataFiles(); err != nil {
 		return nil, err
 	}
-	// 查看目录中是否有hint文件，如果有就在这个目录下加载索引
-	if err := db.loadIndexFromHintFile(); err != nil {
-		return nil, err
+	// 如果是B +树的索引在NewIndexer的时候就已经把索引建好了
+	if db.options.IndexerType != BPTree {
+		// 查看目录中是否有hint文件，如果有就在这个目录下加载索引
+		if err := db.loadIndexFromHintFile(); err != nil {
+			return nil, err
+		}
+		// 从数据文件中加载索引的方法 => 在内存中建立BTree
+		if err := db.loadIndexFromDataFiles(); err != nil {
+			return nil, err
+		}
 	}
-
-	// 从数据文件中加载索引的方法 => 在内存中建立BTree
-	if err := db.loadIndexFromDataFiles(); err != nil {
-		return nil, err
+	// 取出当前的事务序列号
+	if options.IndexerType == BPTree {
+		if err := db.loadSeqNo(); err != nil {
+			return nil, err
+		}
+		// 这个地方有一个细节就是如果没有从数据文件中加载索引是没法拿到当前活跃文件的最新偏移的
+		if db.activeFile != nil {
+			size, err := db.activeFile.IOManager.Size()
+			if err != nil {
+				return nil, err
+			}
+			db.activeFile.WritOff = size
+		}
 	}
 	return db, nil
 }
 
 // Close 关闭数据库
 func (db *DB) Close() error {
+
 	if db.activeFile == nil {
 		return nil
 	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
+	// 关闭index
+	if err := db.index.Close(); err != nil {
+		return err
+	}
+	// 保存当前的序列号给b+树索引进行加载
+	seqNoFile, err := data.OpenSeqNoFile(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+	record := &data.LogRecord{
+		Key:   []byte(seqNoKey),
+		Value: []byte(strconv.FormatUint(db.seqNo, 10)),
+	}
+	enRecord, _ := data.EncodeLogRecord(record)
+	if err := seqNoFile.Write(enRecord); err != nil {
+		return err
+	}
+	if err := seqNoFile.Sync(); err != nil {
+		return err
+	}
 
 	// 关闭当前活跃文件
 	if err := db.activeFile.Close(); err != nil {
@@ -168,6 +220,8 @@ func (db *DB) Delete(key []byte) error {
 // ListKey 将所有Key给列出来
 func (db *DB) ListKeys() [][]byte {
 	iterator := db.index.Iterator(false)
+	defer iterator.Close()
+
 	keys := make([][]byte, db.index.Size())
 	var idx int
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
@@ -183,6 +237,7 @@ func (db *DB) Fold(fn func(key []byte, value []byte) bool) error {
 	defer db.mu.RUnlock()
 
 	iterator := db.index.Iterator(false)
+	defer iterator.Close()
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
 		// 将所有的值给取出来
 		value, err := db.getValueByPosition(iterator.Value())
@@ -352,12 +407,10 @@ func (db *DB) loadIndexFromDataFiles() error {
 		hasMerge = true
 		nonMergeFileId = fileId
 	}
-
 	// 暂存事务数据-> 需要存储事务信息以及LogRecord本身
 	// 结构: seqNo -> [transactionRecord0,transactionRecord1,transactionRecord2...]
 	transactionRecords := make(map[uint64][]*data.TransactionRecord)
 	var currentSeqNo uint64 = nonTransactionSeqNo
-
 	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
 		if typ == data.LogRecordDeleted {
 			// 将其从索引中删除
@@ -372,7 +425,6 @@ func (db *DB) loadIndexFromDataFiles() error {
 			}
 		}
 	}
-
 	// 遍历并取出文件的内容
 	for i, fid := range db.fileIds {
 		var fileId = uint32(fid)
@@ -386,7 +438,6 @@ func (db *DB) loadIndexFromDataFiles() error {
 			dataFile = db.olderFile[fileId]
 		}
 		// 处理这个文件中的所有的内容
-
 		var offset int64 = 0
 		for {
 			logRecord, size, err := dataFile.ReadLogRecord(offset)
@@ -422,14 +473,12 @@ func (db *DB) loadIndexFromDataFiles() error {
 						Record: logRecord,
 						Pos:    logRecordPos,
 					})
-
 				}
 			}
 			// 更新序列号q
 			if seqNo > currentSeqNo {
 				currentSeqNo = seqNo
 			}
-
 			offset = offset + size
 
 		}
@@ -440,4 +489,27 @@ func (db *DB) loadIndexFromDataFiles() error {
 	}
 	db.seqNo = currentSeqNo
 	return nil
+}
+
+func (db *DB) loadSeqNo() error {
+	fileName := filepath.Join(db.options.DirPath, data.SeqNoFileName)
+	if _, err := os.Stat(fileName); os.IsNotExist(err) {
+		return nil
+	}
+
+	seqNoFile, err := data.OpenSeqNoFile(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+	record, _, err := seqNoFile.ReadLogRecord(0)
+	if err != nil {
+		return err
+	}
+	seqNo, err := strconv.ParseUint(string(record.Value), 10, 64)
+	if err != nil {
+		return err
+	}
+	db.seqNo = seqNo
+	db.seqNoExist = true
+	return os.Remove(fileName)
 }

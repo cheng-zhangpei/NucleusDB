@@ -51,6 +51,7 @@ func TestBTree_Iterator(t *testing.T) {
 	// 1.BTree 为空的情况
 	iter1 := bt1.Iterator(false)
 	assert.Equal(t, false, iter1.Valid())
+	iter1.Close()
 
 	//	2.BTree 有数据的情况
 	bt1.Put([]byte("ccde"), &data.LogRecordPos{Fid: 1, Offset: 10})
@@ -60,6 +61,7 @@ func TestBTree_Iterator(t *testing.T) {
 	assert.NotNil(t, iter2.Value())
 	iter2.Next()
 	assert.Equal(t, false, iter2.Valid())
+	iter2.Close()
 
 	// 3.有多条数据
 	bt1.Put([]byte("acee"), &data.LogRecordPos{Fid: 1, Offset: 10})
@@ -71,6 +73,7 @@ func TestBTree_Iterator(t *testing.T) {
 		assert.NotNil(t, iter3.Key())
 	}
 	t.Log("=========================================================")
+	iter3.Close()
 
 	iter4 := bt1.Iterator(true)
 	for iter4.Rewind(); iter4.Valid(); iter4.Next() {
@@ -79,6 +82,7 @@ func TestBTree_Iterator(t *testing.T) {
 		assert.NotNil(t, iter4.Key())
 	}
 	t.Log("=========================================================")
+	iter4.Close()
 
 	// 4.测试 seek
 	iter5 := bt1.Iterator(false)
@@ -88,7 +92,7 @@ func TestBTree_Iterator(t *testing.T) {
 
 	}
 	t.Log("=========================================================")
-
+	iter5.Close()
 	// 5.反向遍历的 seek
 	iter6 := bt1.Iterator(true)
 	for iter6.Seek([]byte("eede")); iter6.Valid(); iter6.Next() {
@@ -96,4 +100,5 @@ func TestBTree_Iterator(t *testing.T) {
 
 		assert.NotNil(t, iter6.Key())
 	}
+	iter6.Close()
 }
