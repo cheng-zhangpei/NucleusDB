@@ -7,40 +7,87 @@ import (
 	"testing"
 )
 
-func destroyFile(filename string) {
-	if err := os.Remove(filename); err != nil {
+func destroyFile(name string) {
+	if err := os.RemoveAll(name); err != nil {
 		panic(err)
 	}
 }
+
 func TestNewFileIOManager(t *testing.T) {
-	fio, err := NewFileIOManager(filepath.Join("/tmp", "a.data"))
+	path := filepath.Join("/tmp", "a.data")
+	fio, err := NewFileIOManager(path)
+	defer destroyFile(path)
+
 	assert.Nil(t, err)
 	assert.NotNil(t, fio)
-	defer destroyFile(filepath.Join("/tmp", "a.data"))
-
 }
-func TestFileIo_Write(t *testing.T) {
-	fio, err := NewFileIOManager(filepath.Join("/tmp", "a.data"))
+
+func TestFileIO_Write(t *testing.T) {
+	path := filepath.Join("/tmp", "a.data")
+	fio, err := NewFileIOManager(path)
+	defer destroyFile(path)
+
 	assert.Nil(t, err)
 	assert.NotNil(t, fio)
-	defer destroyFile(filepath.Join("/tmp", "a.data"))
 
-	n, err1 := fio.Write([]byte(""))
+	n, err := fio.Write([]byte(""))
 	assert.Equal(t, 0, n)
-	assert.Nil(t, err1)
+	assert.Nil(t, err)
+
+	n, err = fio.Write([]byte("bitcask kv"))
+	assert.Equal(t, 10, n)
+	assert.Nil(t, err)
+
+	n, err = fio.Write([]byte("storage"))
+	assert.Equal(t, 7, n)
+	assert.Nil(t, err)
 }
 
-func TestFileIo_Read(t *testing.T) {
-	fio, err := NewFileIOManager(filepath.Join("/tmp", "0002.data"))
+func TestFileIO_Read(t *testing.T) {
+	path := filepath.Join("/tmp", "a.data")
+	fio, err := NewFileIOManager(path)
+	defer destroyFile(path)
+
 	assert.Nil(t, err)
 	assert.NotNil(t, fio)
-	defer destroyFile(filepath.Join("/tmp", "0002.data")) // 函数运行结束之后就退出就ok
 
-	_, err2 := fio.Write([]byte("key-b"))
-	assert.Nil(t, err2)
+	_, err = fio.Write([]byte("key-a"))
+	assert.Nil(t, err)
 
-	b := make([]byte, 5) // 这个地方只会读出来五个数据
-	n, err := fio.Read(b, 0)
-	t.Log(b, n)
-	assert.Equal(t, []byte("key-b"), b)
+	_, err = fio.Write([]byte("key-b"))
+	assert.Nil(t, err)
+
+	b1 := make([]byte, 5)
+	n, err := fio.Read(b1, 0)
+	assert.Equal(t, 5, n)
+	assert.Equal(t, []byte("key-a"), b1)
+
+	b2 := make([]byte, 5)
+	n, err = fio.Read(b2, 5)
+	assert.Equal(t, 5, n)
+	assert.Equal(t, []byte("key-b"), b2)
+}
+
+func TestFileIO_Sync(t *testing.T) {
+	path := filepath.Join("/tmp", "a.data")
+	fio, err := NewFileIOManager(path)
+	defer destroyFile(path)
+
+	assert.Nil(t, err)
+	assert.NotNil(t, fio)
+
+	err = fio.Sync()
+	assert.Nil(t, err)
+}
+
+func TestFileIO_Close(t *testing.T) {
+	path := filepath.Join("/tmp", "a.data")
+	fio, err := NewFileIOManager(path)
+	defer destroyFile(path)
+
+	assert.Nil(t, err)
+	assert.NotNil(t, fio)
+
+	err = fio.Close()
+	assert.Nil(t, err)
 }

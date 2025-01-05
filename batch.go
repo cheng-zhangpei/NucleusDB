@@ -135,21 +135,21 @@ func (wb *WriteBatch) Commit() error {
 	return nil
 }
 
-// 将动态增长的序列号拼接到key的前面
+// key+Seq Number 编码
 func logRecordKeyWithSeq(key []byte, seqNo uint64) []byte {
 	seq := make([]byte, binary.MaxVarintLen64)
-	n := binary.PutUvarint(seq, seqNo)
+	n := binary.PutUvarint(seq[:], seqNo)
 
-	encKey := make([]byte, n+len(seq))
+	encKey := make([]byte, n+len(key))
 	copy(encKey[:n], seq[:n])
 	copy(encKey[n:], key)
 
 	return encKey
 }
 
+// 解析 LogRecord 的 key，获取实际的 key 和事务序列号
 func parseLogRecordKey(key []byte) ([]byte, uint64) {
 	seqNo, n := binary.Uvarint(key)
-	//  前面一半是事务序列号
 	realKey := key[n:]
 	return realKey, seqNo
 }

@@ -2,6 +2,7 @@ package ComDB
 
 import (
 	"ComDB/data"
+	"ComDB/fio"
 	"io"
 	"os"
 	"path"
@@ -77,8 +78,8 @@ func (db *DB) Merge() error {
 		return err
 	}
 	// 打开一个hint文件处理索引
-
-	hintFile, err := data.OpenHintDataFile(mergePath)
+	ioType := fio.StandardFIO
+	hintFile, err := data.OpenHintDataFile(mergePath, ioType)
 	if err != nil {
 		return err
 	}
@@ -124,7 +125,7 @@ func (db *DB) Merge() error {
 		return err
 	}
 	// 写merge完成的标识
-	mergeFinishedFile, err := data.OpenMergeFinishedFile(mergePath)
+	mergeFinishedFile, err := data.OpenMergeFinishedFile(mergePath, ioType)
 	if err != nil {
 		return err
 	}
@@ -215,7 +216,8 @@ func (db *DB) loadMergeFiles() error {
 }
 
 func (db *DB) getNonMergeFileId(dirPath string) (uint32, error) {
-	mergeFinishedFile, err := data.OpenMergeFinishedFile(dirPath)
+	var ioType = fio.StandardFIO
+	mergeFinishedFile, err := data.OpenMergeFinishedFile(dirPath, ioType)
 	if err != nil {
 		return 0, err
 	}
@@ -239,7 +241,8 @@ func (db *DB) loadIndexFromHintFile() error {
 	if _, err := os.Stat(HintFileName); err == nil {
 		return nil
 	}
-	hintFile, err := data.OpenHintDataFile(HintFileName)
+	ioType := fio.StandardFIO
+	hintFile, err := data.OpenHintDataFile(HintFileName, ioType)
 	if err != nil {
 		return err
 	}

@@ -3,10 +3,11 @@ package ComDB
 import "os"
 
 type Options struct {
-	DirPath      string // 数据库数据目录
-	DataFileSize int64  // 数据文件大小
-	SyncWrite    bool   //是否每次写入都持久化
-	IndexerType  int8   // 内存索引类型
+	DirPath       string // 数据库数据目录
+	DataFileSize  int64  // 数据文件大小
+	SyncWrite     bool   //是否每次写入都持久化
+	IndexerType   int8   // 内存索引类型
+	MMapAtStartUp bool
 }
 
 type IteratorOptions struct {
@@ -33,10 +34,11 @@ const (
 
 // DefaultOptions 一个默认的options
 var DefaultOptions = Options{
-	DirPath:      os.TempDir(),
-	DataFileSize: 256 * 1024 * 1024,
-	SyncWrite:    true,
-	IndexerType:  BPTree,
+	DirPath:       os.TempDir(),
+	DataFileSize:  256 * 1024 * 1024,
+	SyncWrite:     true,
+	IndexerType:   BTree,
+	MMapAtStartUp: true,
 }
 
 // DefaultIteratorOptions 一个默认的索引迭代器
