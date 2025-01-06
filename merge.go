@@ -3,6 +3,7 @@ package ComDB
 import (
 	"ComDB/data"
 	"ComDB/fio"
+	"ComDB/utils"
 	"io"
 	"os"
 	"path"
@@ -24,6 +25,27 @@ func (db *DB) Merge() error {
 		db.mu.Unlock()
 		return ErrMergeIsProcessing
 	}
+	// 查看merge是否到达用户设置的阈值
+	totalSize, err2 := utils.DirSize(db.options.DirPath)
+	if err2 != nil {
+		db.mu.Unlock()
+		return err2
+	}
+	if float32(db.reclaimSize)/float32(totalSize) < db.options.DataFileMergeRatio {
+		db.mu.Unlock()
+		return ErrMergeRatioUnreachable
+	}
+	// 查看剩余磁盘空间是否还能支撑merge
+	availableDiskSize, err := utils.AvailableDiskSize()
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
+	if uint64(totalSize-db.reclaimSize) > -availableDiskSize {
+		db.mu.Unlock()
+		return ErrMergeRatioUnreachable
+	}
+	// 开始merge
 	db.isMerging = true
 	// 这种写法要稍微注意一下
 	defer func() {
@@ -177,6 +199,9 @@ func (db *DB) loadMergeFiles() error {
 			mergeFinished = true
 		}
 		if entry.Name() == data.SeqNoFileName {
+			continue
+		}
+		if entry.Name() == data.FileLockName {
 			continue
 		}
 		mergeFileName = append(mergeFileName, entry.Name())

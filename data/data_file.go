@@ -14,6 +14,7 @@ const DataFileNameSuffix = ".data"
 const HintFileName = "hint-index"
 const MergeFinishedFileName = "merge-finished"
 const SeqNoFileName = "seq-no"
+const FileLockName = "lock-file"
 
 // crc type keySize valueSize 4 + 1 + 5 + 5 = 15 binary.MaxVarintLen32其实标识的就是两个变化大小的常量key、value的size
 const maxLogRecordHeaderSize = binary.MaxVarintLen32*2 + 5

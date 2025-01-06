@@ -28,11 +28,14 @@ func NewAdaptiveRadixTree() *AdaptiveRadixTree {
 }
 
 // Put Pur put向索引中存储的key对应的数据位置信息
-func (art *AdaptiveRadixTree) Put(key []byte, pos *data.LogRecordPos) bool {
+func (art *AdaptiveRadixTree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
 	art.lock.Lock()
-	art.tree.Insert(key, pos)
+	value, _ := art.tree.Insert(key, pos)
 	art.lock.Unlock()
-	return true
+	if value == nil {
+		return nil
+	}
+	return value.(*data.LogRecordPos)
 }
 
 // Get 根据key取出信息
@@ -47,11 +50,14 @@ func (art *AdaptiveRadixTree) Get(key []byte) *data.LogRecordPos {
 }
 
 // Delete 删除信息
-func (art *AdaptiveRadixTree) Delete(key []byte) bool {
+func (art *AdaptiveRadixTree) Delete(key []byte) (*data.LogRecordPos, bool) {
 	art.lock.Lock()
-	_, deleted := art.tree.Delete(key)
+	oldValue, deleted := art.tree.Delete(key)
 	art.lock.Unlock()
-	return deleted
+	if oldValue == nil {
+		return nil, false
+	}
+	return oldValue.(*data.LogRecordPos), deleted
 }
 
 // Iterator 索引迭代器

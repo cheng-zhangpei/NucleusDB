@@ -9,11 +9,11 @@ import (
 // Indexer 内存抽象接口定义
 type Indexer interface {
 	// Put Pur put向索引中存储的key对应的数据位置信息
-	Put(key []byte, pos *data.LogRecordPos) bool
+	Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos
 	// Get 根据key取出信息
 	Get(key []byte) *data.LogRecordPos
 	// Delete 删除信息
-	Delete(key []byte) bool
+	Delete(key []byte) (*data.LogRecordPos, bool)
 	// Iterator 索引迭代器
 	Iterator(reverse bool) Iterator
 	// Size 判断索引中存在多少条数据

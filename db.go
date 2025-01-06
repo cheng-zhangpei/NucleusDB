@@ -4,6 +4,7 @@ import (
 	"ComDB/data"
 	"ComDB/fio"
 	"ComDB/index"
+	"ComDB/utils"
 	"errors"
 	"fmt"
 	"github.com/gofrs/flock"
@@ -19,21 +20,29 @@ import (
 )
 
 const seqNoKey = "seq-no-key"
-const fileLockName = "lock-file"
 
 // DB bitcask db instance
 type DB struct {
-	mu         *sync.RWMutex
-	activeFile *data.DataFile            // 当前活跃文件
-	olderFile  map[uint32]*data.DataFile // 非活跃文件-> 只用于读
-	fileIds    []int                     // 只能在加载索引的时候使用
-	options    Options                   // 数据库配置
-	index      index.Indexer
-	seqNo      uint64       // 当前事务的序列号，事务的序列号是全局递增的
-	isMerging  bool         // 是否当前正在进行merge操作
-	seqNoExist bool         // 是否存在序列号文件--> 这个文件是在数据库关闭的时候才会生成
-	isInitial  bool         // 是否是第一次初始化
-	fileLock   *flock.Flock //目录锁
+	mu          *sync.RWMutex
+	activeFile  *data.DataFile            // 当前活跃文件
+	olderFile   map[uint32]*data.DataFile // 非活跃文件-> 只用于读
+	fileIds     []int                     // 只能在加载索引的时候使用
+	options     Options                   // 数据库配置
+	index       index.Indexer
+	seqNo       uint64       // 当前事务的序列号，事务的序列号是全局递增的
+	isMerging   bool         // 是否当前正在进行merge操作
+	seqNoExist  bool         // 是否存在序列号文件--> 这个文件是在数据库关闭的时候才会生成
+	isInitial   bool         // 是否是第一次初始化
+	fileLock    *flock.Flock //目录锁
+	reclaimSize int64        // 统计有多少数据是可以用于merge的
+
+}
+
+type Stat struct {
+	KeyNum          uint  // key 总数
+	DataFile        uint  // 磁盘上数据文件数量
+	ReclaimableSize int64 // 可以进行merge回收的数据量
+	DiskSize        int64 // 数据目录所占磁盘空间
 }
 
 func Open(options Options) (*DB, error) {
@@ -51,7 +60,7 @@ func Open(options Options) (*DB, error) {
 		}
 	}
 
-	fileLock := flock.New(filepath.Join(options.DirPath, fileLockName))
+	fileLock := flock.New(filepath.Join(options.DirPath, data.FileLockName))
 	lock, err2 := fileLock.TryLock()
 	if err2 != nil {
 		return nil, err2
@@ -168,6 +177,28 @@ func (db *DB) Close() error {
 
 }
 
+// Stat 返回数据库相关统计信息
+func (db *DB) Stat() *Stat {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var dataFiles = uint(len(db.olderFile))
+	if db.activeFile != nil {
+		dataFiles += 1
+	}
+	dirSize, err := utils.DirSize(db.options.DirPath)
+	if err != nil {
+		panic(fmt.Sprintf("failed to get dir size : %v", err))
+	}
+
+	return &Stat{
+		KeyNum:          uint(db.index.Size()),
+		DataFile:        dataFiles,
+		ReclaimableSize: db.reclaimSize,
+		DiskSize:        dirSize,
+	}
+}
+
 // Sync 持久化活跃文件
 func (db *DB) Sync() error {
 	if db.activeFile == nil {
@@ -196,11 +227,11 @@ func (db *DB) Put(key []byte, value []byte) error {
 	// 拿到插入之后的内存索引信息
 	logRecordPos, err := db.appendLogRecordWithLock(logRecord)
 	if err != nil {
-		return err
+		return ErrIndexUpdateFailed
 	}
 	// 更新内存索引
-	if ok := db.index.Put(key, logRecordPos); !ok {
-		return ErrIndexUpdateFailed
+	if oldValue := db.index.Put(key, logRecordPos); oldValue != nil {
+		db.reclaimSize += oldValue.Size
 	}
 	return nil
 }
@@ -237,12 +268,19 @@ func (db *DB) Delete(key []byte) error {
 		Key:  logRecordKeyWithSeq(key, nonTransactionSeqNo),
 		Type: data.LogRecordDeleted}
 	// 将这条数据给插入到数据文件中去
-	if _, err := db.appendLogRecordWithLock(logRecord); err != nil {
+	pos, err := db.appendLogRecordWithLock(logRecord)
+	if err != nil {
 		return nil
 	}
+	db.reclaimSize += int64(pos.Size)
+
 	// 删除在内存索引中的对应的数据
-	if ok := db.index.Delete(key); !ok {
+	oldValue, ok := db.index.Delete(key)
+	if !ok {
 		return ErrIndexUpdateFailed
+	}
+	if oldValue != nil {
+		db.reclaimSize += oldValue.Size
 	}
 	return nil
 }
@@ -350,7 +388,7 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 		}
 	}
 	// 构造一个内存索引信息对内存中的内容进行同步
-	pos := &data.LogRecordPos{Fid: db.activeFile.FileId, Offset: writeOff}
+	pos := &data.LogRecordPos{Fid: db.activeFile.FileId, Offset: writeOff, Size: size}
 	return pos, nil
 }
 
@@ -377,6 +415,9 @@ func checkOption(options Options) error {
 	}
 	if options.DataFileSize <= 0 {
 		return errors.New("database data file size must be greater")
+	}
+	if options.DataFileMergeRatio <= 0 || options.DataFileMergeRatio >= 1 {
+		return errors.New("DataFileMergeRatio can only lie in 0~1")
 	}
 	return nil
 }
@@ -445,10 +486,18 @@ func (db *DB) loadIndexFromDataFiles() error {
 	}
 
 	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
+		var oldPos *data.LogRecordPos
 		if typ == data.LogRecordDeleted {
-			db.index.Delete(key)
+			oldPos, _ = db.index.Delete(key)
+			db.reclaimSize += int64(pos.Size)
+
 		} else {
-			db.index.Put(key, pos)
+			oldPos = db.index.Put(key, pos)
+			db.reclaimSize += int64(pos.Size)
+
+		}
+		if oldPos != nil {
+			db.reclaimSize += int64(oldPos.Size)
 		}
 	}
 
@@ -481,7 +530,7 @@ func (db *DB) loadIndexFromDataFiles() error {
 			}
 
 			// 构造内存索引并保存
-			logRecordPos := &data.LogRecordPos{Fid: fileId, Offset: offset}
+			logRecordPos := &data.LogRecordPos{Fid: fileId, Offset: offset, Size: size}
 
 			// 解析 key，拿到事务序列号
 			realKey, seqNo := parseLogRecordKey(logRecord.Key)
