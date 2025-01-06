@@ -37,6 +37,7 @@ func (db *DB) Merge() error {
 	}
 	// 查看剩余磁盘空间是否还能支撑merge
 	availableDiskSize, err := utils.AvailableDiskSize()
+
 	if err != nil {
 		db.mu.Unlock()
 		return err
@@ -81,7 +82,7 @@ func (db *DB) Merge() error {
 	mergePath := db.getMergePath()
 	// 如果这个merge目录存在（说明之前存在merge）
 	// 需要将目录删掉
-	if _, err := os.Stat(mergePath); err != nil {
+	if _, err := os.Stat(mergePath); err == nil {
 		if err := os.Remove(mergePath); err != nil {
 			return err
 		}
@@ -105,6 +106,17 @@ func (db *DB) Merge() error {
 	if err != nil {
 		return err
 	}
+	if hintFile == nil {
+		ioManager, err := fio.NewIOManager(filepath.Join(mergePath, data.HintFileName), ioType)
+		if err != nil {
+			return err
+		}
+		hintFile = &data.DataFile{
+			FileId:    0,
+			WritOff:   0,
+			IOManager: ioManager,
+		}
+	}
 	// 遍历每一个数据文件
 	for _, dataFile := range mergeFiles {
 		var offset int64 = 0
@@ -112,30 +124,29 @@ func (db *DB) Merge() error {
 			logRecord, size, err := dataFile.ReadLogRecord(offset)
 			if err != nil {
 				if err == io.EOF {
-					// 读到文件末尾了
 					break
 				}
 				return err
 			}
-			// 得到实际key
+			// 解析拿到实际的 key
 			realKey, _ := parseLogRecordKey(logRecord.Key)
-			// 需要判断这条信息是否有效
 			logRecordPos := db.index.Get(realKey)
-			// 如果不为空，Fid与offset的disk和memory中数据一致
-			// 此处并不需要重写事务序列号，因为保证事务已经执行有效了
-			// 其实并不需要去进行类型的判断，因为类型不正确的记录并不会加载到内存索引中
-			if logRecordPos != nil && logRecordPos.Fid == dataFile.FileId && logRecordPos.Offset == offset {
+			// 和内存中的索引位置进行比较，如果有效则重写
+			if logRecordPos != nil &&
+				logRecordPos.Fid == dataFile.FileId &&
+				logRecordPos.Offset == offset {
 				// 清除事务标记
 				logRecord.Key = logRecordKeyWithSeq(realKey, nonTransactionSeqNo)
 				pos, err := mergeDB.appendLogRecord(logRecord)
 				if err != nil {
 					return err
 				}
-				// 将当前位置的索引写到hint文件中
+				// 将当前位置索引写到 Hint 文件当中
 				if err := hintFile.WriteHintFile(realKey, pos); err != nil {
 					return err
 				}
 			}
+			// 增加 offset
 			offset += size
 		}
 	}
@@ -262,14 +273,13 @@ func (db *DB) getNonMergeFileId(dirPath string) (uint32, error) {
 
 // 从hint文件中加载索引
 func (db *DB) loadIndexFromHintFile() error {
-	HintFileName := filepath.Join(db.options.DirPath, data.HintFileName)
-	if _, err := os.Stat(HintFileName); err == nil {
-		return nil
-	}
 	ioType := fio.StandardFIO
-	hintFile, err := data.OpenHintDataFile(HintFileName, ioType)
+	hintFile, err := data.OpenHintDataFile(db.options.DirPath, ioType)
 	if err != nil {
 		return err
+	}
+	if hintFile == nil {
+		return nil
 	}
 	// 读取文件的索引
 	var offset int64 = 0

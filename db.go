@@ -90,7 +90,7 @@ func Open(options Options) (*DB, error) {
 		return nil, err
 	}
 	// 加载数据文件 => 其实就是将用户指定目录下的数据文件给放到数据库项中可以识别到文件标识符
-	if err := db.loadDataFiles(); err != nil {
+	if err := db.loadDataFiles(); err != nil { // 现在hint-index还是有的
 		return nil, err
 	}
 	// 如果是B +树的索引在NewIndexer的时候就已经把索引建好了
@@ -147,20 +147,22 @@ func (db *DB) Close() error {
 		return err
 	}
 	// 保存当前的序列号给b+树索引进行加载
-	seqNoFile, err := data.OpenSeqNoFile(db.options.DirPath, fio.StandardFIO)
-	if err != nil {
-		return err
-	}
-	record := &data.LogRecord{
-		Key:   []byte(seqNoKey),
-		Value: []byte(strconv.FormatUint(db.seqNo, 10)),
-	}
-	enRecord, _ := data.EncodeLogRecord(record)
-	if err := seqNoFile.Write(enRecord); err != nil {
-		return err
-	}
-	if err := seqNoFile.Sync(); err != nil {
-		return err
+	if db.options.IndexerType == BPTree {
+		seqNoFile, err := data.OpenSeqNoFile(db.options.DirPath, fio.StandardFIO)
+		if err != nil {
+			return err
+		}
+		record := &data.LogRecord{
+			Key:   []byte(seqNoKey),
+			Value: []byte(strconv.FormatUint(db.seqNo, 10)),
+		}
+		enRecord, _ := data.EncodeLogRecord(record)
+		if err := seqNoFile.Write(enRecord); err != nil {
+			return err
+		}
+		if err := seqNoFile.Sync(); err != nil {
+			return err
+		}
 	}
 
 	// 关闭当前活跃文件
@@ -197,6 +199,11 @@ func (db *DB) Stat() *Stat {
 		ReclaimableSize: db.reclaimSize,
 		DiskSize:        dirSize,
 	}
+}
+func (db *DB) Backup(dir string) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return utils.CopyDir(db.options.DirPath, dir, []string{data.FileLockName})
 }
 
 // Sync 持久化活跃文件
@@ -261,7 +268,7 @@ func (db *DB) Delete(key []byte) error {
 	}
 	// 查找key是否存在
 	if pos := db.index.Get(key); pos == nil {
-		return nil
+		return ErrKeyNotFound
 	}
 	// 构建LogRecord信息标识这个key被删除的
 	logRecord := &data.LogRecord{
@@ -416,7 +423,7 @@ func checkOption(options Options) error {
 	if options.DataFileSize <= 0 {
 		return errors.New("database data file size must be greater")
 	}
-	if options.DataFileMergeRatio <= 0 || options.DataFileMergeRatio >= 1 {
+	if options.DataFileMergeRatio < 0 || options.DataFileMergeRatio > 1 {
 		return errors.New("DataFileMergeRatio can only lie in 0~1")
 	}
 	return nil

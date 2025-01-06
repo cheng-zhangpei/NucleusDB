@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"os"
 	"path/filepath"
 )
 
@@ -37,7 +38,16 @@ func OpenDataFile(dirPath string, fileId uint32, ioTYpe fio.FileIOType) (*DataFi
 }
 
 // OpenHintDataFile 打开hint文件
-func OpenHintDataFile(fileName string, ioTYpe fio.FileIOType) (*DataFile, error) {
+func OpenHintDataFile(dirPath string, ioTYpe fio.FileIOType) (*DataFile, error) {
+	fileName := filepath.Join(dirPath, HintFileName)
+	if _, err := os.Stat(fileName); err != nil {
+		if os.IsNotExist(err) {
+			// 如果文件不存在，返回 nil
+			return nil, nil
+		}
+		// 如果是其他错误（如权限问题），返回错误
+		return nil, err
+	}
 	return NewDataFile(fileName, 0, ioTYpe)
 }
 
@@ -85,14 +95,12 @@ func (df *DataFile) Write(buf []byte) error {
 }
 
 func (df *DataFile) WriteHintFile(key []byte, pos *LogRecordPos) error {
-
 	record := &LogRecord{
-		Key: key,
-		// 涉及到写入的操作肯定是需要对LogRecordPos进行编码的
+		Key:   key,
 		Value: EncodeLogRecordPos(pos),
 	}
-	encLogRecord, _ := EncodeLogRecord(record)
-	return df.Write(encLogRecord)
+	encRecord, _ := EncodeLogRecord(record)
+	return df.Write(encRecord)
 }
 
 // ReadLogRecord 根据偏移读取具体的LogRecord==> 自己写go的习惯一直不是非常好，这个地方要记得自己
