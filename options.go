@@ -19,6 +19,11 @@ type IteratorOptions struct {
 	Reverse bool
 }
 
+type ServerConfig struct {
+	Host string
+	Port string
+}
+
 type WriteBatchOptions struct {
 	// 批次中最大数据量
 	MaxBatchNum uint32
@@ -53,4 +58,9 @@ var DefaultIteratorOptions = IteratorOptions{
 var DefaultWriteBatchOptions = WriteBatchOptions{
 	MaxBatchNum: 32,
 	SyncWrite:   false,
+}
+
+var DefaultWebServerOptions = ServerConfig{
+	Host: "127.0.0.1",
+	Port: "6380",
 }
