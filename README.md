@@ -323,7 +323,7 @@ func (db *DB) Sync() error
 
 ​		为了保证事务的串行化，我们给每一个事务唯一的标识，seqNo，由数据库实例维护。在任何一个key插入数据库时需要拼接事务前缀。下图是维护事物的大致流程：
 
-![transaction](D:\czp\毕设开发日志\mdfile\graph\transaction.png)
+![transaction](image/transaction.png)
 
 ​
 
@@ -331,7 +331,7 @@ func (db *DB) Sync() error
 
 ​	 首先需要将datafile加载到内存中，我们需要区分事务操作与非事物操作，如果是非事务操作就可以直接更新索引，如果是事务操作，判断是否是Fin事务终止标识，如果是就将txnId中的所有事物生效，如果不是终止标识就将操作暂存在Transaction区。
 
-![finishedTxn](D:\czp\毕设开发日志\mdfile\graph\finishedTxn.png)
+![finishedTxn](image/finishedTxn.png)
 
 ---
 
@@ -395,11 +395,11 @@ func (wb *WriteBatch) Commit() error {
 
 ​		merge有可能因为一些原因导致merge中断，所以在mergeDir中添加了mergeFinished文件，在进行merge操作之前需要先判断是否有未完成的merge操作，如果没有mergeFinished文件说明存在没完成的merge操作。该文件中需要保存一条logRecord，内容是记录了没有被Merge的最小的数据文件。因为在merge的过程中依然可能会有数据被添加，且需要在merge的过程中删除旧的数据文件，所以需要一个数据文件的分界线。
 
-​	![MergeDetail](D:\czp\毕设开发日志\mdfile\graph\MergeDetail.png)
+​	![MergeDetail](image/MergeDetail.png)
 
 ​	说实话我干辣椒这种merge的方法也是相当消耗内存的
 
-### 内存索引优化、IO优化、merge优化
+### 内存索引优化、IO优化
 
 #### 内存索引优化
 
@@ -457,27 +457,126 @@ func (art *AdaptiveRadixTree) Close() error
 
 #### IO优化
 
-#### merge优化
-
-
+* 目录锁：之前并没有实现一个数据库实例中就有一个数据库进程。所以现在添加一个文件锁。也就是这个目录下会生成一个锁文件每次进入这个目录的进程都要去尝试持有这个锁。在系统中其实就是在Open()方法中需要先尝试获取锁。如果没有获取到这个锁就抛出异常
+* 启动速度优化：我们在启动数据库的时候需要进行索引的加载，加载的方法为从磁盘中取出所有的数据文件，并构建索引。但何种方法若数据库崩溃，需要数据库实例快速重启，速度过慢。对于未优化的IO方法：用户通过系统调用，os会将从文件中获取的数据存放在内核缓冲区，再将内核缓冲区的数据拷贝到用户缓冲区。若采用内存文件映射来进行启动的加速，那么就免去了数据从内核态拷贝到用户态的时间。
 
 ------
 
 ### 数据备份、HTTP Server、benchmark测试
 
+* 数据备份：较简单，其实就是再开一个目录把现在的数据给保存下来，但是暂时数据库也只支持手动的进行数据的备份而不支持数据的自动的备份。所以在后续的优化中，需要和merge操作一同设置为定时任务，定时对数据进行merge清理以及备份。
+* Http server ：将数据库的能力暴露出来，此处暂时不实现gRPC的接口
 
+```go
+package main
+
+import (
+	ComDB "ComDB"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+)
+
+var db *ComDB.DB
+func init() 
+func handlePut(writer http.ResponseWriter, request *http.Request)
+func handleGet(writer http.ResponseWriter, request *http.Request) 
+func handleDelete(writer http.ResponseWriter, request *http.Request) 
+func handleListKeys(writer http.ResponseWriter, request *http.Request)
+func handleStat(writer http.ResponseWriter, request *http.Request)
+func handlePrefix(writer http.ResponseWriter, request *http.Request)
+func main() {
+	// 注册处理方法
+	http.HandleFunc("/bitcask/put", handlePut)
+	http.HandleFunc("/bitcask/get", handleGet)
+	http.HandleFunc("/bitcask/delete", handleDelete)
+	http.HandleFunc("/bitcask/listkeys", handleListKeys)
+	http.HandleFunc("/bitcask/stat", handleStat)
+	http.HandleFunc("/bitcask/prefix", handlePrefix) // 新增前缀查询路由
+
+	// 启动 HTTP 服务
+	log.Println("Starting HTTP server on localhost:8080...")
+	if err := http.ListenAndServe("localhost:8080", nil); err != nil {
+		log.Fatalf("Failed to start HTTP server: %v\n", err)
+	}
+}
+```
+
+​	下面这几个功能还是比较简单的，所以这里就简单的描述一下
 
 ---
 
+* Benchmark：
+
+​	测试指标：1、吞吐量 。2、响应时间。 3、并发度
+
+```go
+var db *ComDB.DB
+func init() {
+	// 初始化用于基准测试的存储引擎
+	options := ComDB.DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-bench")
+	options.DirPath = dir
+
+	var err error
+	db, err = ComDB.Open(options)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func Benchmark_Put(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		err := db.Put(utils.GetTestKey(i), utils.RandomValue(1024))
+		assert.Nil(b, err)
+	}
+}
+
+func Benchmark_Get(b *testing.B) {
+	for i := 0; i < 10000; i++ {
+		err := db.Put(utils.GetTestKey(i), utils.RandomValue(1024))
+		assert.Nil(b, err)
+	}
+
+	rand.Seed(uint64(time.Now().UnixNano()))
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := db.Get(utils.GetTestKey(rand.Int()))
+		if err != nil && err != ComDB.ErrKeyNotFound {
+			b.Fatal(err)
+		}
+	}
+}
+
+func Benchmark_Delete(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	rand.Seed(uint64(time.Now().UnixNano()))
+	for i := 0; i < b.N; i++ {
+		err := db.Delete(utils.GetTestKey(rand.Int()))
+		assert.Nil(b, err)
+	}
+}
+```
+
 ### Redis格式、Redis协议支持
 
+​	在前面的数据引擎中我们只实现了几个简单的数据操作接口，但在实际的操作中这样的需求可以满足的功能十分有限。后续将参考NoSQL数据库的行业标准Redis实现数据类型的多样化，本系统将添加Redis六种数据结构：String、Hash、Set、List、ZSet、bitmap
 
+​	设计上就是采用KV接口之上去实现几种数据接口，将这几种结构进行转化和编码，然后使用我们的bitcask存储引擎的KV接口来进行存储。
 
 ------------------
 
 ### 记忆搜索算法与实现
 
-#todo：必做
+#todo：基础功能做完之后实现，需要Redis格式常用数据的支持
 
 ------------------
 
