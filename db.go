@@ -55,7 +55,7 @@ func Open(options Options) (*DB, error) {
 	// 判断数据目录是否存在
 	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
 		isInitial = true
-		if err := os.MkdirAll(options.DirPath, os.ModePerm); err == nil {
+		if err := os.MkdirAll(options.DirPath, os.ModePerm); err != nil {
 			return nil, err
 		}
 	}

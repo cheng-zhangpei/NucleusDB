@@ -2,6 +2,7 @@ package main
 
 import (
 	ComDB "ComDB"
+	"ComDB/search"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -176,6 +177,103 @@ func handlePrefix(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
+// ===================================== Memory ===================================
+// handleMemoryGet 处理获取记忆的请求
+func handleMemoryGet(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从查询参数中获取 agentId
+	agentId := request.URL.Query().Get("agentId")
+	if agentId == "" {
+		http.Error(writer, "agentId parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// 创建 MemoryStructure 实例
+	ms := &search.MemoryStructure{
+		Db: db,
+	}
+
+	// 调用 MMGet 方法
+	memory, err := ms.MMGet(agentId)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回结果
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(memory)
+}
+
+// handleMemorySet 处理设置记忆的请求
+func handleMemorySet(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 解析请求体
+	var data struct {
+		AgentId string `json:"agentId"`
+		Value   string `json:"value"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&data); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// 创建 MemoryStructure 实例
+	ms := &search.MemoryStructure{
+		Db: db,
+	}
+
+	// 调用 MMSet 方法
+	if err := ms.MMSet([]byte(data.Value), data.AgentId); err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回成功响应
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode("OK")
+}
+
+// handleMemorySearch 处理搜索记忆的请求
+func handleMemorySearch(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从查询参数中获取 agentId 和 searchItem
+	agentId := request.URL.Query().Get("agentId")
+	searchItem := request.URL.Query().Get("searchItem")
+	if agentId == "" || searchItem == "" {
+		http.Error(writer, "agentId and searchItem parameters are required", http.StatusBadRequest)
+		return
+	}
+
+	// 创建 MemoryStructure 实例
+	ms := &search.MemoryStructure{
+		Db: db,
+	}
+
+	// 调用 matchSearch 方法
+	result, err := ms.MatchSearch(searchItem, agentId)
+
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回结果
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(result)
+}
 func main() {
 	// 注册处理方法
 	http.HandleFunc("/bitcask/put", handlePut)
@@ -184,6 +282,9 @@ func main() {
 	http.HandleFunc("/bitcask/listkeys", handleListKeys)
 	http.HandleFunc("/bitcask/stat", handleStat)
 	http.HandleFunc("/bitcask/prefix", handlePrefix) // 新增前缀查询路由
+	http.HandleFunc("/memory/get", handleMemoryGet)
+	http.HandleFunc("/memory/set", handleMemorySet)
+	http.HandleFunc("/memory/search", handleMemorySearch)
 
 	// 启动 HTTP 服务
 	log.Println("Starting HTTP server on localhost:8080...")
