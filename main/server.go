@@ -38,6 +38,7 @@ func main() {
 	bitcaskServer.server = redcon.NewServer(addr, execClientCommand,
 		bitcaskServer.accept, bitcaskServer.close)
 	bitcaskServer.listen()
+
 }
 
 func (svr *BitcaskServer) listen() {

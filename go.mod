@@ -5,11 +5,13 @@ go 1.22.0
 toolchain go1.22.10
 
 require (
+	github.com/emirpasic/gods v1.18.1
 	github.com/gofrs/flock v0.12.1
 	github.com/google/btree v1.1.3
 	github.com/plar/go-adaptive-radix-tree v1.0.7
 	github.com/stretchr/testify v1.10.0
 	github.com/tidwall/redcon v1.6.2
+	github.com/yanyiwu/gojieba v1.4.5
 	go.etcd.io/bbolt v1.3.11
 	golang.org/x/exp v0.0.0-20250103183323-7d7fa50e5329
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c

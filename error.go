@@ -13,4 +13,5 @@ var (
 	ErrDatabaseIsUsing        = errors.New("database is using database")
 	ErrMergeRatioUnreachable  = errors.New("merge ratio unreachable")
 	ErrNoEnoughSpaceForMerge  = errors.New("no enough space for merge ratio")
+	ErrMemoryMetaNotFound     = errors.New("memory meta error")
 )
