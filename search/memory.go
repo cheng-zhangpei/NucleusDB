@@ -12,6 +12,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type memoryMeta struct {
 	match      *match_method.TFIDFMatcher // TF-IDF 匹配器
 	timesHeap  *priorityqueue.Queue       // 时间戳堆
 	jieba      *gojieba.Jieba             // Jieba 分词器（不持久化）
+	mu         *sync.Mutex                // 在加锁的时候不允许压缩
 }
 
 func NewMemoryMeta(agentId string, totalSize int64) *memoryMeta {
@@ -35,6 +37,7 @@ func NewMemoryMeta(agentId string, totalSize int64) *memoryMeta {
 		memorySize: 0, // 初始 memorySize 为 0
 		match:      match_method.NewTFIDFMatcher(),
 		jieba:      gojieba.NewJieba(), // 初始化 Jieba 分词器
+		mu:         new(sync.Mutex),
 	}
 }
 
@@ -43,7 +46,7 @@ func NewMemoryMeta(agentId string, totalSize int64) *memoryMeta {
 // IdOffset |	agentId  	   |memorySize	  |	totalSize		|	HeapSize	    |	timeStampHeap							|
 //
 // ----------------------|-----------------------|-----------------------|-----------------------|-----------------------------|
-func (mm *memoryMeta) encode() []byte {
+func (mm *memoryMeta) Encode() []byte {
 	// 计算 agentId 的长度
 	agentIdSize := len(mm.agentId)
 
@@ -259,6 +262,7 @@ func NewMemoryStructure(opts ComDB.Options, agentId string, totalSize int64) (*M
 	if err != nil {
 		return nil, err
 	}
+
 	memoryMetaData := NewMemoryMeta(agentId, totalSize)
 	return &MemoryStructure{
 		Db: db,
@@ -269,7 +273,8 @@ func NewMemoryStructure(opts ComDB.Options, agentId string, totalSize int64) (*M
 // MMGet 获取记忆:此处为获取所有的记忆
 func (ms *MemoryStructure) MMGet(agentId string) (string, error) {
 	var meta *memoryMeta = nil
-	meta, err := ms.findMetaData([]byte(agentId))
+
+	meta, err := ms.FindMetaData([]byte(agentId))
 	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
 		return "", err
 	}
@@ -280,6 +285,8 @@ func (ms *MemoryStructure) MMGet(agentId string) (string, error) {
 	}
 	// 获取所有的数据
 	ms.mm = meta
+	ms.mm.mu.Lock()
+	defer ms.mm.mu.Unlock()
 	timeStamp := ms.mm.GetAllMemory()
 	var memory string = ""
 	for i, timeStamp := range timeStamp {
@@ -299,7 +306,7 @@ func (ms *MemoryStructure) MMGet(agentId string) (string, error) {
 // MMSet 设置记忆
 func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	// 查找 meta 数据
-	meta, err := ms.findMetaData([]byte(agentId))
+	meta, err := ms.FindMetaData([]byte(agentId))
 	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
 		return err // 返回错误
 	}
@@ -309,16 +316,20 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	}
 	// 这里需要更新信息
 	ms.mm = meta
+	ms.mm.mu.Lock()
+	defer ms.mm.mu.Unlock()
 	// 获取当前时间戳
 	timeStamp := time.Now().UnixNano()
 	// 构建真实的 key
 	realKey := getSearchKey(timeStamp, agentId)
 	// 构建 SearchRecord
 	matches := ms.mm.match.GenerateMatches(string(value), ms.mm.jieba)
-	searchRecord := &SearchRecord{
-		matchField: matches, // 使用传入的 key 作为 matchField
-		dataField:  value,   // 使用传入的 value 作为 dataField
-	}
+
+	comPressNumThreshold := ComDB.DefaultCompressOptions.ComPressNumThreshold
+	searchRecord := NewSearchRecord(comPressNumThreshold)
+	searchRecord.dataField = value
+	searchRecord.matchField = matches
+
 	// 保存match信息=>也就是简单更新一些文档的参数
 	ms.mm.match.Store(string(value), ms.mm.jieba)
 	// 编码 SearchRecord
@@ -331,7 +342,7 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	_ = wb.Put(realKey, encodedRecord)
 	// 将时间戳添加到 meta 的时间戳堆中
 	meta.AddTimestamp(timeStamp)
-	enMeta := ms.mm.encode()
+	enMeta := ms.mm.Encode()
 	_ = wb.Put([]byte(agentId), enMeta)
 	// 提交事务
 	if err := wb.Commit(); err != nil {
@@ -343,7 +354,7 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 // 得到匹配程度高的
 func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string) (string, error) {
 	var meta *memoryMeta = nil
-	meta, err := ms.findMetaData([]byte(agentId))
+	meta, err := ms.FindMetaData([]byte(agentId))
 	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
 		return "", err
 	}
@@ -353,6 +364,8 @@ func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string) (strin
 		meta = NewMemoryMeta(agentId, 10)
 	}
 	ms.mm = meta
+	ms.mm.mu.Lock()
+	defer ms.mm.mu.Unlock()
 	// 相似性数组
 	similarities := make([]float64, ms.mm.GetMemorySize())
 	timeStamps := ms.mm.GetAllMemory()
@@ -416,10 +429,32 @@ func calculateStats(similarities []float64) (float64, float64) {
 	return avg, stdDev
 }
 
+// GetSimilarities 获得记忆空间中所有的历史相似性
+func (ms *MemoryStructure) GetSimilarities() (map[string][]float64, error) {
+	similarities := make(map[string][]float64)
+	timeStamps := ms.mm.GetAllMemory()
+
+	for _, timeStamp := range timeStamps {
+		// 构建真实的key
+		realKey := getSearchKey(timeStamp, ms.mm.agentId)
+		value, err := ms.Db.Get(realKey)
+		// 堆中的数据必须都要存在
+		if err != nil {
+			return nil, err
+		}
+		searchRecord, err := DecodeSearchRecord(value)
+		// 历史信息
+		hisSim := searchRecord.similarities
+		// 获取历史相似性记录
+		similarities[string(realKey)] = hisSim
+	}
+	return similarities, nil
+}
+
 // =========================================================================================
 
 // 根据用户的输入找到元数据
-func (ms *MemoryStructure) findMetaData(key []byte) (*memoryMeta, error) {
+func (ms *MemoryStructure) FindMetaData(key []byte) (*memoryMeta, error) {
 	metaData, err := ms.Db.Get(key)
 	if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
 		return nil, err
@@ -434,6 +469,7 @@ func (ms *MemoryStructure) findMetaData(key []byte) (*memoryMeta, error) {
 			return nil, err
 		}
 	}
+
 	if !exists {
 		// 到外层创建MemoryMeta
 		return nil, ComDB.ErrMemoryMetaNotFound

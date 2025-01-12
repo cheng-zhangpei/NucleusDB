@@ -30,7 +30,11 @@ type WriteBatchOptions struct {
 	// 提交事务的时候是否进行sync持久化
 	SyncWrite bool
 }
-
+type CompressOptions struct {
+	ComPressNumThreshold   int64   // 该记忆空间压缩
+	CompressHighSimDis     float64 // 高相似压缩距离
+	CompressCleanThreshold float64 // 高压缩清理系数
+}
 type IndexerType = int8
 
 const (
@@ -63,4 +67,10 @@ var DefaultWriteBatchOptions = WriteBatchOptions{
 var DefaultWebServerOptions = ServerConfig{
 	Host: "127.0.0.1",
 	Port: "6380",
+}
+
+var DefaultCompressOptions = CompressOptions{
+	ComPressNumThreshold:   5,   // 记忆空间可压缩节点数量达到 5 时触发压缩
+	CompressHighSimDis:     0.8, // 相似度大于 0.8 的节点被认为是高度相似的
+	CompressCleanThreshold: 0.2, // 压缩系数大于 0.2 的节点会被清理
 }

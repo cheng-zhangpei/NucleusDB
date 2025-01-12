@@ -43,7 +43,7 @@ func TestMemoryStructure(t *testing.T) {
 	assert.Equal(t, expected, result, "Unexpected result")
 
 	// 验证 memorySize
-	meta, err := ms.findMetaData([]byte("agent1"))
+	meta, err := ms.FindMetaData([]byte("agent1"))
 	assert.NoError(t, err, "Failed to find meta data")
 	assert.Equal(t, int64(2), meta.GetMemorySize(), "Unexpected memory size")
 

@@ -274,6 +274,35 @@ func handleMemorySearch(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(writer).Encode(result)
 }
+
+// handleCreateMemoryMeta 处理创建记忆空间的请求
+func handleCreateMemoryMeta(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// 解析请求体
+	var data struct {
+		AgentId   string `json:"agentId"`
+		TotalSize int64  `json:"totalSize"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&data); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// 创建记忆空间 ->
+	meta := search.NewMemoryMeta(data.AgentId, data.TotalSize)
+	enMeta := meta.Encode()
+	// 现在是一个空的记忆空间
+	_ = db.Put([]byte(data.AgentId), enMeta)
+	// 返回响应
+	writer.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(writer).Encode(meta); err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
 func main() {
 	// 注册处理方法
 	http.HandleFunc("/bitcask/put", handlePut)
@@ -285,6 +314,7 @@ func main() {
 	http.HandleFunc("/memory/get", handleMemoryGet)
 	http.HandleFunc("/memory/set", handleMemorySet)
 	http.HandleFunc("/memory/search", handleMemorySearch)
+	http.HandleFunc("/memory/create", handleCreateMemoryMeta)
 
 	// 启动 HTTP 服务
 	log.Println("Starting HTTP server on localhost:8080...")
