@@ -17,8 +17,8 @@
 
 ## Prerequisites
 
-- Go 1.16 or higher.
-- Linux environment (recommended for deployment).
+- Go 1.22 or higher.
+- Linux environment.
 
 ## Getting Started
 

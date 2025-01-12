@@ -827,19 +827,19 @@ type Match interface {
    ​		可压缩的条件是由该记忆节点可压缩系数决定的，下面是压缩操作参数的表示
 
 
-   $$
-   \text{ComCo} =  \frac{1}{\sum_{i} \left( \text{TF-IDF}(D_{\text{input}}, D_{\text{memory}_i}) \times \lambda e^{-\lambda t_i} \right)}
-   $$
+$$
+\text{ComCo} =  \frac{1}{\sum_{i} \left( \text{TF-IDF}(D_{\text{input}}, D_{\text{memory}_i}) \times \lambda e^{-\lambda t_i} \right)}
+$$
 
-   $$
-   D_{\text{input}} 是输入内容。
-   D_{\text{memory}_i} 是第 i 个记忆内容。
-   \text{TF-IDF}(D_{\text{input}}, D_{\text{memory}_i}) 是输入内容与第i个记忆内容的相似系数。
-   $$
+$$
+D_{\text{input}} 是输入内容。
+D_{\text{memory}_i} 是第 i 个记忆内容。
+\text{TF-IDF}(D_{\text{input}}, D_{\text{memory}_i}) 是输入内容与第i个记忆内容的相似系数。
+$$
 
-   $$
-   \lambda e^{-\lambda t_i}是时间衰减函数，\text{ComCo}为压缩系数
-   $$
+$$
+\lambda e^{-\lambda t_i}是时间衰减函数，\text{ComCo}为压缩系数
+$$
 
 ​				压缩系数小，说明在该压缩周期内，匹配程度高。对于记忆空间中取出的数据是从近到远进行排列的，在时间维度上的权重符合指数分布的概念密度函数，即时间权重从大到小。每次压缩器都会衰减系数列表中拿出固定个数（由用户决定）的记忆节点进行压缩操作。思路还是比较简单的。
 

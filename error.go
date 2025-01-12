@@ -14,4 +14,5 @@ var (
 	ErrMergeRatioUnreachable  = errors.New("merge ratio unreachable")
 	ErrNoEnoughSpaceForMerge  = errors.New("no enough space for merge ratio")
 	ErrMemoryMetaNotFound     = errors.New("memory meta error")
+	ErrCompressNumNotEnough   = errors.New("compress num not enough")
 )

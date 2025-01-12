@@ -448,7 +448,7 @@ func (db *DB) loadDataFiles() error {
 			fileIds = append(fileIds, fileId)
 		}
 	}
-	//现在就获得了所有的fileId的list了
+	// 现在就获得了所有的fileId的list了
 	// 对文件ID进行排序，从小到大依次排序
 	sort.Ints(fileIds)
 	db.fileIds = fileIds
@@ -497,11 +497,9 @@ func (db *DB) loadIndexFromDataFiles() error {
 		if typ == data.LogRecordDeleted {
 			oldPos, _ = db.index.Delete(key)
 			db.reclaimSize += int64(pos.Size)
-
 		} else {
 			oldPos = db.index.Put(key, pos)
 			db.reclaimSize += int64(pos.Size)
-
 		}
 		if oldPos != nil {
 			db.reclaimSize += int64(oldPos.Size)

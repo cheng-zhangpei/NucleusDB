@@ -34,6 +34,11 @@ type CompressOptions struct {
 	ComPressNumThreshold   int64   // 该记忆空间压缩
 	CompressHighSimDis     float64 // 高相似压缩距离
 	CompressCleanThreshold float64 // 高压缩清理系数
+	CompressNum            int64   // 压缩批次中记忆节点数量
+}
+
+type CompressionModelOptions struct {
+	Endpoint string // 模型地址
 }
 type IndexerType = int8
 
@@ -70,7 +75,12 @@ var DefaultWebServerOptions = ServerConfig{
 }
 
 var DefaultCompressOptions = CompressOptions{
-	ComPressNumThreshold:   5,   // 记忆空间可压缩节点数量达到 5 时触发压缩
+	ComPressNumThreshold:   3,   // 记忆空间可压缩节点数量达到 3 时触发压缩
 	CompressHighSimDis:     0.8, // 相似度大于 0.8 的节点被认为是高度相似的
 	CompressCleanThreshold: 0.2, // 压缩系数大于 0.2 的节点会被清理
+	CompressNum:            3,   // 三个记忆节点达到压缩阈值的时候进行压缩
+}
+
+var DefaultCompressModelOptions = CompressionModelOptions{
+	Endpoint: "http://172.24.216.71:5000/generate",
 }

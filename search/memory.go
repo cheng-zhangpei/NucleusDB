@@ -112,6 +112,7 @@ func decodeMemoryMeta(data []byte) (*memoryMeta, error) {
 		timesHeap: priorityqueue.NewWith(Int64Comparator), // 使用自定义的 Int64Comparator
 		match:     match_method.NewTFIDFMatcher(),
 		jieba:     gojieba.NewJieba(), // 初始化 Jieba 分词器
+		mu:        new(sync.Mutex),
 	}
 	index := 0
 
@@ -351,10 +352,15 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	return nil
 }
 
-// 得到匹配程度高的
-func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string) (string, error) {
+// MatchSearch 得到匹配程度高的，只有在match的时候才会触发相似度的更新
+func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string,
+	opts ComDB.CompressOptions) (string, error) {
 	var meta *memoryMeta = nil
+	ComThreshold := opts.CompressNum // 压缩系数数组长度
 	meta, err := ms.FindMetaData([]byte(agentId))
+	if meta == nil {
+		panic("inside match meta is nil")
+	}
 	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
 		return "", err
 	}
@@ -382,19 +388,39 @@ func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string) (strin
 			return "", err
 		}
 		// 先初始化一个jieba，别放到Store里头？
+		similaritiesSave := record.similarities
 		searchItemMatches := ms.mm.match.GenerateMatches(searchItem, ms.mm.jieba)
 		similarity := ms.mm.match.Match(record.matchField, searchItemMatches)
+		// 保存这一次匹配的数据record.similarities有固定的初始化大小，既然这样解码出来的record.similarities大小是有限制的
+		// 对于匹配操作的本身并不能说在这个记忆空间中的相似性满了就停止匹配，这个地方需要有一个替换策略，但是这样解码的难度又更大
+		// 获取标识
+		flags := record.simFlags
+		index, full := statusDecode(flags)
+		updateSimilarities, index, isFull := similaritiesUpdate(index, full, ComThreshold,
+			similaritiesSave, similarity)
+		status := statusEncode(index, isFull)
+		// 更新持久化record
+		record.simFlags = status
+		record.similarities = updateSimilarities
+		encodeSearchRecord := record.Encode()
+		err = ms.Db.Put(realKey, encodeSearchRecord)
+		test, _ := ms.Db.Get(realKey)
+		if string(test) != string(encodeSearchRecord) {
+
+			return "", err
+		}
+		if err != nil {
+			return "", err
+		}
+		// 暂存参数用于后续计算
 		values[i] = string(record.dataField)
 		similarities[i] = similarity
 	}
 	// todo ：是否有更加合理的相似度计算方式？
-
 	// 计算平均相似性和标准差
 	avgSimilarity, stdDev := calculateStats(similarities)
-
 	// 设定动态阈值
 	threshold := avgSimilarity + stdDev
-
 	// 过滤出高于阈值的记忆
 	var results []string
 	for i, similarity := range similarities {
@@ -402,12 +428,10 @@ func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string) (strin
 			results = append(results, values[i])
 		}
 	}
-
 	// 如果没有高于阈值的记忆，返回空
 	if len(results) == 0 {
 		return "", nil
 	}
-
 	// 返回匹配的记忆
 	return strings.Join(results, ", "), nil
 }
@@ -419,13 +443,11 @@ func calculateStats(similarities []float64) (float64, float64) {
 		sum += s
 	}
 	avg := sum / float64(len(similarities))
-
 	variance := 0.0
 	for _, s := range similarities {
 		variance += math.Pow(s-avg, 2)
 	}
 	stdDev := math.Sqrt(variance / float64(len(similarities)))
-
 	return avg, stdDev
 }
 
@@ -452,8 +474,7 @@ func (ms *MemoryStructure) GetSimilarities() (map[string][]float64, error) {
 }
 
 // =========================================================================================
-
-// 根据用户的输入找到元数据
+// FindMetaData 根据用户的输入找到元数据
 func (ms *MemoryStructure) FindMetaData(key []byte) (*memoryMeta, error) {
 	metaData, err := ms.Db.Get(key)
 	if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
@@ -469,10 +490,10 @@ func (ms *MemoryStructure) FindMetaData(key []byte) (*memoryMeta, error) {
 			return nil, err
 		}
 	}
-
 	if !exists {
 		// 到外层创建MemoryMeta
 		return nil, ComDB.ErrMemoryMetaNotFound
 	}
+	//  拿到持久化的数据之后还需要初始化没有持久化的数据
 	return meta, nil
 }

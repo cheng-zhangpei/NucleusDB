@@ -10,16 +10,19 @@ import (
 type SearchRecord struct {
 	matchField   map[string]float64 // 使用 map 存储 TF-IDF 数据
 	dataField    []byte
-	similarities []float64 // 使用 map 存储 TF-IDF 数据
+	simFlags     uint8     // 用于记录一些similarities 状态 7~1 bit 用于记录similarities的位置，0位记录similarities是否满
+	similarities []float64 // 使用 map 存储 TF-IDF 数据，长度限制为127
 }
 
 func NewSearchRecord(comPressNumThreshold int64) *SearchRecord {
 	return &SearchRecord{
 		matchField:   make(map[string]float64),
 		dataField:    make([]byte, 0),
+		simFlags:     0, // 0: 未满, 初始位置位0 from [0,1,2....],此处在后续使用的时候需要注意上限
 		similarities: make([]float64, comPressNumThreshold),
 	}
 }
+
 func getSearchKey(timeStamp int64, agentId string) []byte {
 	// 计算 agentId 的长度
 	agentIdSize := len(agentId)
@@ -64,8 +67,8 @@ func (sr *SearchRecord) Encode() []byte {
 	dataFieldSize := len(sr.dataField)
 
 	// 计算缓冲区大小
-	// matchField 长度 (变长) + matchField 内容 + similarities 长度 (变长) + similarities 内容 + dataField 长度 (变长) + dataField 内容
-	bufSize := binary.MaxVarintLen64 + matchFieldSize + binary.MaxVarintLen64 + similaritiesSize + binary.MaxVarintLen64 + dataFieldSize
+	// matchField 长度 (变长) + matchField 内容 + similarities 长度 (变长) + similarities 内容 + dataField 长度 (变长) + dataField 内容 + simFlags (1字节)
+	bufSize := binary.MaxVarintLen64 + matchFieldSize + binary.MaxVarintLen64 + similaritiesSize + binary.MaxVarintLen64 + dataFieldSize + 1
 	buf := make([]byte, bufSize)
 
 	index := 0
@@ -91,10 +94,13 @@ func (sr *SearchRecord) Encode() []byte {
 	copy(buf[index:index+dataFieldSize], sr.dataField)
 	index += dataFieldSize
 
+	// 编码 simFlags
+	buf[index] = sr.simFlags
+	index += 1
+
 	// 返回实际使用的字节数据
 	return buf[:index]
 }
-
 func DecodeSearchRecord(data []byte) (*SearchRecord, error) {
 	sr := &SearchRecord{}
 	index := 0
@@ -152,6 +158,37 @@ func DecodeSearchRecord(data []byte) (*SearchRecord, error) {
 	}
 	sr.dataField = make([]byte, dataFieldSize)
 	copy(sr.dataField, data[index:index+int(dataFieldSize)])
+	index += int(dataFieldSize)
+
+	// 解码 simFlags
+	if len(data) < index+1 {
+		return nil, fmt.Errorf("invalid data: insufficient bytes for simFlags")
+	}
+	sr.simFlags = data[index]
+	index += 1
 
 	return sr, nil
+}
+
+// statusDecode 用于状态的解码
+func statusDecode(flag uint8) (index int, isFull bool) {
+	// 第 0 位表示是否已满
+	isFull = (flag & 0x01) == 1
+	// 第 1~7 位表示当前更新位置
+	index = int((flag >> 1) & 0x7F)
+	return index, isFull
+}
+
+// statusEncode 用于状态的编码
+func statusEncode(index int, isFull bool) uint8 {
+	// 第 0 位表示是否已满
+	var flag uint8
+	if isFull {
+		flag |= 0x01
+	}
+
+	// 第 1~7 位表示当前更新位置
+	flag |= uint8((index & 0x7F) << 1)
+
+	return flag
 }

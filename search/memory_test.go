@@ -57,6 +57,7 @@ func TestMemoryStructure(t *testing.T) {
 func TestMemoryStructureWithChinese(t *testing.T) {
 	// 初始化 MemoryStructure
 	opts := ComDB.DefaultOptions
+	optsCompress := ComDB.DefaultCompressOptions
 	opts.DirPath = "/tmp/bitcask_memory_test"
 	agentId := "agent1"
 	totalSize := int64(10)
@@ -114,7 +115,7 @@ func TestMemoryStructureWithChinese(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		result, err := ms.MatchSearch(tc.searchItem, agentId)
+		result, err := ms.MatchSearch(tc.searchItem, agentId, optsCompress)
 		if err != nil {
 			t.Fatalf("Failed to match search: %v", err)
 		}
