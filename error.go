@@ -15,4 +15,5 @@ var (
 	ErrNoEnoughSpaceForMerge  = errors.New("no enough space for merge ratio")
 	ErrMemoryMetaNotFound     = errors.New("memory meta error")
 	ErrCompressNumNotEnough   = errors.New("compress num not enough")
+	ErrTimestampNotExist      = errors.New("timestamp not exist in the memory")
 )

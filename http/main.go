@@ -244,6 +244,7 @@ func handleMemorySet(writer http.ResponseWriter, request *http.Request) {
 
 // handleMemorySearch 处理搜索记忆的请求
 func handleMemorySearch(writer http.ResponseWriter, request *http.Request) {
+	opts := ComDB.DefaultCompressOptions
 	if request.Method != http.MethodGet {
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -263,7 +264,7 @@ func handleMemorySearch(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	// 调用 matchSearch 方法
-	result, err := ms.MatchSearch(searchItem, agentId)
+	result, err := ms.MatchSearch(searchItem, agentId, opts)
 
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
@@ -303,6 +304,59 @@ func handleCreateMemoryMeta(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
+// handleCompress 处理压缩请求
+func handleCompress(writer http.ResponseWriter, request *http.Request) {
+	opt := ComDB.DefaultCompressOptions
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 解析请求体
+	var data struct {
+		AgentID  string `json:"agentId"`
+		Endpoint string `json:"endpoint"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&data); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// 获取 Compressor 实例
+	dbOpts := ComDB.DefaultOptions
+	db, err := ComDB.Open(dbOpts)
+	if err != nil {
+		fmt.Println("db open err!")
+		return
+	}
+	ms := &search.MemoryStructure{
+		Db: db,
+	}
+	// 获取meta并装载=> 此时记忆空间装载完成
+	metaData, err := ms.FindMetaData([]byte(data.AgentID))
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+	}
+	ms.Mm = metaData
+
+	compressor, err := search.NewCompressor(opt, data.AgentID, ms) // 假设 NewCompressor 是 Compressor 的构造函数
+	if err != nil {
+		return
+	}
+	// 调用 Compress 方法
+	success, err := compressor.Compress(data.AgentID, data.Endpoint)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回响应
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+		"status":  "success",
+		"success": success,
+	})
+}
 func main() {
 	// 注册处理方法
 	http.HandleFunc("/bitcask/put", handlePut)

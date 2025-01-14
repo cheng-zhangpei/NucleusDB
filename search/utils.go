@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 )
 
 // getCompressCoefficient 计算压缩系数，由于时间相似性的值比较小，压缩系数的值就会比较大
@@ -102,8 +103,7 @@ func getLLMResponse(data []string, tokenDistribute []int, endpoint string) ([]st
 		prompt := buildPrompt(text, tokenDistribute[i])
 		// 构造请求体
 		requestBody := map[string]interface{}{
-			"message":    prompt,
-			"max_tokens": tokenDistribute[i], // 使用分配的 token 数量
+			"message": prompt,
 		}
 		requestBodyBytes, err := json.Marshal(requestBody)
 		if err != nil {
@@ -156,15 +156,46 @@ func buildPrompt(text string, compressToken int) string {
 	prompt := fmt.Sprintf(`
 # 我需要你对下面给的 data 数据进行压缩或者扩充。
 # compress_token 参数是你需要将 data 扩充或者压缩到的长度，将压缩的结果放到 response 的 compressed_data 字段中。
-# request part
-%s
-# response
-# 下面是你的回复，你只需要回复下面的括号中的内容也就是 json 结构体。
+# 在遇到代码等结构性数据时尽量不要修改代码本身含义，可以通过删减注释等方式进行修改。在所给与的生成长度实在无法表达需要压缩字段的原意
+# 你能够稍微进行拓展使其语义丰满一些
+# 你的回复必须严格遵循以下格式，用 '''json 包裹，且只包含 compressed_data 字段：
+'''json
 {
     "compressed_data": "xxx"
-}`, string(requestJSON))
+}
+'''
+# request part
+%s`, string(requestJSON))
 
 	return prompt
+}
+
+// modelDecode 解析模型的响应，提取 compressed_data 字段
+func modelDecode(modelResponse string) (string, error) {
+	// 定义正则表达式，用于提取被 ```json 包裹的内容
+	re := regexp.MustCompile(`(?s)'''json\s*({.*?})\s*'''|({.*})`)
+	matches := re.FindStringSubmatch(modelResponse)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("invalid response format: no JSON content found")
+	}
+
+	// 提取 JSON 内容
+	jsonContent := matches[0]
+
+	// 定义结构体用于解析 JSON
+	type ModelResponse struct {
+		CompressedData string `json:"compressed_data"`
+	}
+
+	// 解析 JSON 内容
+	var response ModelResponse
+	err := json.Unmarshal([]byte(jsonContent), &response)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JSON: %v", err)
+	}
+
+	// 返回 compressed_data 字段的值
+	return response.CompressedData, nil
 }
 
 // similaritiesUpdate 用于记忆空间相似的状态解析

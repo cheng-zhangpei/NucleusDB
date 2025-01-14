@@ -251,10 +251,50 @@ func (mm *memoryMeta) GetAllMemory() []int64 {
 	return timestamps
 }
 
+// RemoveTimestamp 根据时间戳删除堆中的元素
+// todo 由于堆并不支持删除操作，所以每次删除都会导致堆的重建，代价太过庞大，是否有优化方法？
+func (mm *memoryMeta) RemoveTimestamp(timestamp int64) error {
+	// 获取堆中的所有元素
+	items := mm.timesHeap.Values()
+	// 查找目标时间戳的索引
+	index := -1
+	for i, item := range items {
+		if item.(int64) == timestamp {
+			index = i
+			break
+		}
+	}
+
+	// 如果未找到目标时间戳，返回错误
+	if index == -1 {
+		return ComDB.ErrTimestampNotExist
+	}
+
+	// 从堆中删除目标时间戳
+	// 由于堆的实现可能不支持直接删除指定元素，我们需要重建堆
+	newItems := make([]interface{}, 0, len(items)-1)
+	for i, item := range items {
+		if i != index {
+			newItems = append(newItems, item)
+		}
+	}
+
+	// 重建堆
+	mm.timesHeap.Clear()
+	for _, item := range newItems {
+		mm.timesHeap.Enqueue(item)
+	}
+
+	// 更新 memorySize
+	mm.memorySize -= 1
+
+	return nil
+}
+
 // MemoryStructure ================================= memory search===============================
 type MemoryStructure struct {
 	Db *ComDB.DB
-	mm *memoryMeta
+	Mm *memoryMeta
 }
 
 // NewMemoryStructure 给智能体创建记忆空间
@@ -267,7 +307,7 @@ func NewMemoryStructure(opts ComDB.Options, agentId string, totalSize int64) (*M
 	memoryMetaData := NewMemoryMeta(agentId, totalSize)
 	return &MemoryStructure{
 		Db: db,
-		mm: memoryMetaData,
+		Mm: memoryMetaData,
 	}, nil
 }
 
@@ -285,12 +325,12 @@ func (ms *MemoryStructure) MMGet(agentId string) (string, error) {
 		meta = NewMemoryMeta(agentId, 10)
 	}
 	// 获取所有的数据
-	ms.mm = meta
-	ms.mm.mu.Lock()
-	defer ms.mm.mu.Unlock()
-	timeStamp := ms.mm.GetAllMemory()
+	ms.Mm = meta
+	ms.Mm.mu.Lock()
+	defer ms.Mm.mu.Unlock()
+	timeStamps := ms.Mm.GetAllMemory()
 	var memory string = ""
-	for i, timeStamp := range timeStamp {
+	for i, timeStamp := range timeStamps {
 		// 构建真实的key
 		realKey := getSearchKey(timeStamp, agentId)
 		value, err := ms.Db.Get(realKey)
@@ -316,15 +356,15 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 		meta = NewMemoryMeta(agentId, 10) // 默认记忆空间大小为 10
 	}
 	// 这里需要更新信息
-	ms.mm = meta
-	ms.mm.mu.Lock()
-	defer ms.mm.mu.Unlock()
+	ms.Mm = meta
+	ms.Mm.mu.Lock()
+	defer ms.Mm.mu.Unlock()
 	// 获取当前时间戳
 	timeStamp := time.Now().UnixNano()
 	// 构建真实的 key
 	realKey := getSearchKey(timeStamp, agentId)
 	// 构建 SearchRecord
-	matches := ms.mm.match.GenerateMatches(string(value), ms.mm.jieba)
+	matches := ms.Mm.match.GenerateMatches(string(value), ms.Mm.jieba)
 
 	comPressNumThreshold := ComDB.DefaultCompressOptions.ComPressNumThreshold
 	searchRecord := NewSearchRecord(comPressNumThreshold)
@@ -332,7 +372,7 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	searchRecord.matchField = matches
 
 	// 保存match信息=>也就是简单更新一些文档的参数
-	ms.mm.match.Store(string(value), ms.mm.jieba)
+	ms.Mm.match.Store(string(value), ms.Mm.jieba)
 	// 编码 SearchRecord
 	encodedRecord := searchRecord.Encode()
 	// 创建事件
@@ -343,7 +383,7 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	_ = wb.Put(realKey, encodedRecord)
 	// 将时间戳添加到 meta 的时间戳堆中
 	meta.AddTimestamp(timeStamp)
-	enMeta := ms.mm.Encode()
+	enMeta := ms.Mm.Encode()
 	_ = wb.Put([]byte(agentId), enMeta)
 	// 提交事务
 	if err := wb.Commit(); err != nil {
@@ -369,13 +409,13 @@ func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string,
 		// 此处给一个记忆空间的默认值，后续要提供修改记忆空间大小的值
 		meta = NewMemoryMeta(agentId, 10)
 	}
-	ms.mm = meta
-	ms.mm.mu.Lock()
-	defer ms.mm.mu.Unlock()
+	ms.Mm = meta
+	ms.Mm.mu.Lock()
+	defer ms.Mm.mu.Unlock()
 	// 相似性数组
-	similarities := make([]float64, ms.mm.GetMemorySize())
-	timeStamps := ms.mm.GetAllMemory()
-	values := make([]string, ms.mm.GetMemorySize())
+	similarities := make([]float64, ms.Mm.GetMemorySize())
+	timeStamps := ms.Mm.GetAllMemory()
+	values := make([]string, ms.Mm.GetMemorySize())
 	for i, timeStamp := range timeStamps {
 		realKey := getSearchKey(timeStamp, agentId)
 		// 获取数据
@@ -389,8 +429,8 @@ func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string,
 		}
 		// 先初始化一个jieba，别放到Store里头？
 		similaritiesSave := record.similarities
-		searchItemMatches := ms.mm.match.GenerateMatches(searchItem, ms.mm.jieba)
-		similarity := ms.mm.match.Match(record.matchField, searchItemMatches)
+		searchItemMatches := ms.Mm.match.GenerateMatches(searchItem, ms.Mm.jieba)
+		similarity := ms.Mm.match.Match(record.matchField, searchItemMatches)
 		// 保存这一次匹配的数据record.similarities有固定的初始化大小，既然这样解码出来的record.similarities大小是有限制的
 		// 对于匹配操作的本身并不能说在这个记忆空间中的相似性满了就停止匹配，这个地方需要有一个替换策略，但是这样解码的难度又更大
 		// 获取标识
@@ -454,11 +494,11 @@ func calculateStats(similarities []float64) (float64, float64) {
 // GetSimilarities 获得记忆空间中所有的历史相似性
 func (ms *MemoryStructure) GetSimilarities() (map[string][]float64, error) {
 	similarities := make(map[string][]float64)
-	timeStamps := ms.mm.GetAllMemory()
+	timeStamps := ms.Mm.GetAllMemory()
 
 	for _, timeStamp := range timeStamps {
 		// 构建真实的key
-		realKey := getSearchKey(timeStamp, ms.mm.agentId)
+		realKey := getSearchKey(timeStamp, ms.Mm.agentId)
 		value, err := ms.Db.Get(realKey)
 		// 堆中的数据必须都要存在
 		if err != nil {

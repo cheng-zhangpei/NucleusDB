@@ -48,6 +48,33 @@ func getSearchKey(timeStamp int64, agentId string) []byte {
 	// 返回实际使用的字节数据
 	return buf[:index]
 }
+
+// decodeSearchKey 解码字节数组，提取 timeStamp 和 agentId
+func decodeSearchKey(data []byte) (int64, string, error) {
+	index := 0
+
+	// 解码 timeStamp（前8字节，小端存储）
+	if len(data) < 8 {
+		return 0, "", fmt.Errorf("invalid data: insufficient length for timestamp")
+	}
+	timeStamp := int64(binary.LittleEndian.Uint64(data[index : index+8]))
+	index += 8
+
+	// 解码 agentId 的长度（变长编码）
+	agentIdSize, n := binary.Uvarint(data[index:])
+	if n <= 0 {
+		return 0, "", fmt.Errorf("invalid data: failed to decode agentId size")
+	}
+	index += n
+
+	// 解码 agentId 的内容
+	if len(data) < index+int(agentIdSize) {
+		return 0, "", fmt.Errorf("invalid data: insufficient length for agentId")
+	}
+	agentId := string(data[index : index+int(agentIdSize)])
+
+	return timeStamp, agentId, nil
+}
 func (sr *SearchRecord) Encode() []byte {
 	// 将 matchField 序列化为 JSON
 	matchFieldJSON, err := json.Marshal(sr.matchField)
