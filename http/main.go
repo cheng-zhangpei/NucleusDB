@@ -11,6 +11,7 @@ import (
 )
 
 var db *ComDB.DB
+var compressor *search.Compressor
 
 func init() {
 	// 初始化 DB 实例
@@ -321,28 +322,31 @@ func handleCompress(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// 注意一下需要单例获取，否则可能会导致内存膨胀而且运行效率很低
+	if compressor == nil {
+		// 获取 Compressor 实例
+		dbOpts := ComDB.DefaultOptions
+		db, err := ComDB.Open(dbOpts)
+		if err != nil {
+			fmt.Println("db open err!")
+			return
+		}
+		ms := &search.MemoryStructure{
+			Db: db,
+		}
+		// 获取meta并装载=> 此时记忆空间装载完成
+		metaData, err := ms.FindMetaData([]byte(data.AgentID))
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+		}
+		ms.Mm = metaData
 
-	// 获取 Compressor 实例
-	dbOpts := ComDB.DefaultOptions
-	db, err := ComDB.Open(dbOpts)
-	if err != nil {
-		fmt.Println("db open err!")
-		return
+		compressor, err = search.NewCompressor(opt, data.AgentID, ms) // 假设 NewCompressor 是 Compressor 的构造函数
+		if err != nil {
+			return
+		}
 	}
-	ms := &search.MemoryStructure{
-		Db: db,
-	}
-	// 获取meta并装载=> 此时记忆空间装载完成
-	metaData, err := ms.FindMetaData([]byte(data.AgentID))
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
-	}
-	ms.Mm = metaData
 
-	compressor, err := search.NewCompressor(opt, data.AgentID, ms) // 假设 NewCompressor 是 Compressor 的构造函数
-	if err != nil {
-		return
-	}
 	// 调用 Compress 方法
 	success, err := compressor.Compress(data.AgentID, data.Endpoint)
 	if err != nil {
@@ -369,6 +373,7 @@ func main() {
 	http.HandleFunc("/memory/set", handleMemorySet)
 	http.HandleFunc("/memory/search", handleMemorySearch)
 	http.HandleFunc("/memory/create", handleCreateMemoryMeta)
+	http.HandleFunc("/memory/compress", handleCompress)
 
 	// 启动 HTTP 服务
 	log.Println("Starting HTTP server on localhost:8080...")

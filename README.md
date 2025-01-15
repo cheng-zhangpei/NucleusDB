@@ -17,8 +17,8 @@
 
 ## Prerequisites
 
-- Go 1.22 or higher.
-- Linux environment.
+- Go 1.16 or higher.
+- Linux environment (recommended for deployment).
 
 ## Getting Started
 
@@ -34,8 +34,9 @@ cd ComDB/main
 
 if you install redis-cli, you can test the function easily
 
-![test](image/redis-test.png)
+![test](./image/redis-test.png)
 
+#### 
 #### Http Server
 
 ```sh
@@ -73,3 +74,10 @@ func main() {
 }
 ```
 
+​	The details of the http server interface when you boot the execution file in http directory.You can use the interface with /memory prefix to build your llm memory space or even build your mult-agent-cooperation framework !  Now the function is a initial version, more functions,higher availiablity will come soon (if I have time hahh, but it is hard)
+
+[http_interface_details](https://github.com/cheng-zhangpei/ComDB/tree/main/doc/interface.md)
+
+## 
+
+Any question please email:   chengzipi@jmu.edu.cn
