@@ -816,8 +816,7 @@ $$
 $$
 
 $$
-D_{\text{input}} \text{ is input content. }
-D_{\text{memory}_i} \text{ is i th memory content. }
+D_{\text{input}} \text{ is input content. } D_{\text{memory}_i} \text{ is i th memory content. }
 \text{TF-IDF}(D_{\text{input}}, D_{\text{memory}_i}) \text{ is the simlarity coefficient of them. }
 $$
 

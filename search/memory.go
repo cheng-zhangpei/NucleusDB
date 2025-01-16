@@ -223,11 +223,21 @@ func (mm *memoryMeta) AddTimestamp(timestamp int64) {
 
 // GetLatestTimestamp 获取最新的时间戳（堆顶元素）
 func (mm *memoryMeta) GetLatestTimestamp() (int64, bool) {
-	if mm.timesHeap.Size() == 0 {
-		return 0, false
+	// 获取堆中的所有元素
+	items := mm.timesHeap.Values()
+
+	// 将元素转换为 int64 类型
+	timestamps := make([]int64, len(items))
+	for i, item := range items {
+		timestamps[i] = item.(int64)
 	}
-	latest, _ := mm.timesHeap.Peek()
-	return latest.(int64), true
+
+	// 按时间戳从大到小排序（因为堆是最大堆）
+	sort.Slice(timestamps, func(i, j int) bool {
+		return timestamps[i] > timestamps[j]
+	})
+	// 拿到第一个数据
+	return timestamps[0], true
 }
 
 // GetMemorySize 获取当前 memorySize
