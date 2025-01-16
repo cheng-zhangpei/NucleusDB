@@ -223,11 +223,21 @@ func (mm *memoryMeta) AddTimestamp(timestamp int64) {
 
 // GetLatestTimestamp 获取最新的时间戳（堆顶元素）
 func (mm *memoryMeta) GetLatestTimestamp() (int64, bool) {
-	if mm.timesHeap.Size() == 0 {
-		return 0, false
+	// 获取堆中的所有元素
+	items := mm.timesHeap.Values()
+
+	// 将元素转换为 int64 类型
+	timestamps := make([]int64, len(items))
+	for i, item := range items {
+		timestamps[i] = item.(int64)
 	}
-	latest, _ := mm.timesHeap.Peek()
-	return latest.(int64), true
+
+	// 按时间戳从大到小排序（因为堆是最大堆）
+	sort.Slice(timestamps, func(i, j int) bool {
+		return timestamps[i] > timestamps[j]
+	})
+	// 拿到第一个数据
+	return timestamps[0], true
 }
 
 // GetMemorySize 获取当前 memorySize
@@ -342,6 +352,45 @@ func (ms *MemoryStructure) MMGet(agentId string) (string, error) {
 		memory += fmt.Sprintf("timeNear:%d,value:%s\n", i, string(searchRecord.dataField))
 	}
 	return memory, nil
+}
+func (ms *MemoryStructure) MMDel(agentId string) (bool, error) {
+	var meta *memoryMeta = nil
+
+	meta, err := ms.FindMetaData([]byte(agentId))
+	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+		return false, err
+	}
+	// 如果meta不存在的话
+	if errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+		// 此处给一个记忆空间的默认值，后续要提供修改记忆空间大小的值
+		meta = NewMemoryMeta(agentId, 10)
+	}
+	// 获取所有的数据
+	ms.Mm = meta
+	ms.Mm.mu.Lock()
+	defer ms.Mm.mu.Unlock()
+	// 遍历所有的searchKey进行删除
+	timeStamps := ms.Mm.GetAllMemory()
+	optsBat := ComDB.DefaultWriteBatchOptions
+	wb := ms.Db.NewWriteBatch(optsBat)
+	for _, timeStamp := range timeStamps {
+		realKey := getSearchKey(timeStamp, agentId)
+		err := wb.Delete(realKey)
+		if err != nil {
+			return false, err
+		}
+	}
+	// 删除自身的meta数据
+	err = wb.Delete([]byte(agentId))
+	if err != nil {
+		return false, err
+	}
+	// 提交事务
+	err = wb.Commit()
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // MMSet 设置记忆

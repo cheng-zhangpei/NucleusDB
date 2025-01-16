@@ -24,12 +24,14 @@ type Compressor struct {
 // NewCompressor 创建压缩结构
 func NewCompressor(opts ComDB.CompressOptions, agentId string, ms *MemoryStructure) (*Compressor, error) {
 	// 读取元数据
-	mm, err := ms.FindMetaData([]byte(agentId))
-	if err != nil {
-		return nil, err
+	if ms.Mm == nil {
+		mm, err := ms.FindMetaData([]byte(agentId))
+		if err != nil {
+			return nil, err
+		}
+		// 计算不同节点的相似度
+		ms.Mm = mm
 	}
-	// 计算不同节点的相似度
-	ms.Mm = mm
 	ms.Mm.mu.Lock() // 不加锁可能会导致拿出的相似度发生不一致的问题
 	defer ms.Mm.mu.Unlock()
 	similarities, err := ms.GetSimilarities()
@@ -64,7 +66,7 @@ func (cs *Compressor) Compress(agentID string, endpoint string) (bool, error) {
 	// 判断是否到达压缩阈值
 	valid, CompressCoefficient := cs.getCurrentSimilarityLen(cs.SimilarityCoefficientList)
 	if !valid {
-		return false, ComDB.ErrMemoryMetaNotFound
+		return false, ComDB.ErrCompressNumNotEnough
 	}
 	// 用于存储当前批次的数据
 	batch := make([]string, cs.CompressThreshold)
@@ -79,7 +81,10 @@ func (cs *Compressor) Compress(agentID string, endpoint string) (bool, error) {
 		CompressCoefficientList[index] = value
 		index += 1
 		// 如果批次大小达到 CompressNum，则进行压缩
-		if batchSize >= int(cs.CompressThreshold) {
+		if key == "" {
+			break
+		}
+		if batchSize == int(cs.CompressThreshold) {
 			// 调用压缩函数进行压缩
 			compressedData, err := cs.handleCompressedData(batch,
 				CompressCoefficientList, agentID, endpoint)
@@ -92,8 +97,10 @@ func (cs *Compressor) Compress(agentID string, endpoint string) (bool, error) {
 				return false, err // 处理失败，返回错误
 			}
 			// 重置批次
-			batch = make([]string, len(CompressCoefficient))
+			batch = make([]string, cs.CompressThreshold)
 			batchSize = 0
+			// 索引别忘记重置否则会导致越界
+			index = 0
 		}
 	}
 	return true, nil
@@ -181,6 +188,11 @@ func (cs *Compressor) storeCompressedData(compressedData string, realKeys []stri
 		// 这里metaData已经装载了，需要压缩的信息也有可能被其他的记忆替换出了记忆空间，所以找不到searchKey是非常正常的
 		// 但是我总感觉整个数据库的数据更新机制有点问题
 		err = cs.ms.Mm.RemoveTimestamp(timestamp)
+		// 删除SearchRecord
+		err = cs.ms.Db.Delete([]byte(realKey))
+		if err != nil {
+			return err
+		}
 		if errors.Is(err, ComDB.ErrTimestampNotExist) {
 			// 这个地方如果timestamp不存在不一定是有问题。可能是被记忆空间所剔除不影响压缩数据的插入
 			continue

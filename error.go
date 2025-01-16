@@ -10,7 +10,7 @@ var (
 	ErrDataDirectoryCorrupted = errors.New("the directory may be corrupted")
 	ErrExceedMaxBatchNum      = errors.New("max batch num exceeded")
 	ErrMergeIsProcessing      = errors.New("merge is processing")
-	ErrDatabaseIsUsing        = errors.New("database is using database")
+	ErrDatabaseIsUsing        = errors.New("other process is using database")
 	ErrMergeRatioUnreachable  = errors.New("merge ratio unreachable")
 	ErrNoEnoughSpaceForMerge  = errors.New("no enough space for merge ratio")
 	ErrMemoryMetaNotFound     = errors.New("memory meta error")
