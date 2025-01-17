@@ -1,6 +1,8 @@
 package ComDB
 
-import "os"
+import (
+	"os"
+)
 
 type Options struct {
 	DirPath            string  // 数据库数据目录
@@ -9,7 +11,6 @@ type Options struct {
 	IndexerType        int8    // 内存索引类型
 	MMapAtStartUp      bool    // 是否采用内存映射加速数据库启动
 	DataFileMergeRatio float32 //数据文件合并的阈值
-
 }
 
 type IteratorOptions struct {

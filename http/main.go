@@ -48,7 +48,29 @@ func handlePut(writer http.ResponseWriter, request *http.Request) {
 		log.Printf("Key-value pair inserted successfully: key=%s, value=%s\n", key, value)
 	}
 }
+func handlePutByte(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// here I just change the data formation
+	var kv map[string][]byte
 
+	if err := json.NewDecoder(request.Body).Decode(&kv); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		log.Printf("Failed to decode request body: %v\n", err)
+		return
+	}
+
+	for key, value := range kv {
+		if err := db.Put([]byte(key), value); err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			log.Printf("Failed to put key-value pair in db: key=%s, value=%s, error=%v\n", key, value, err)
+			return
+		}
+		log.Printf("Key-value pair inserted successfully: key=%s, value=%s\n", key, value)
+	}
+}
 func handleGet(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
@@ -459,6 +481,7 @@ func healthyCheck(writer http.ResponseWriter, request *http.Request) {
 func main() {
 	// 注册处理方法
 	http.HandleFunc("/bitcask/put", handlePut)
+	http.HandleFunc("/bitcask/putByByte", handlePutByte)
 	http.HandleFunc("/bitcask/get", handleGet)
 	http.HandleFunc("/bitcask/delete", handleDelete)
 	http.HandleFunc("/bitcask/listkeys", handleListKeys)
@@ -476,7 +499,7 @@ func main() {
 
 	// 启动 HTTP 服务
 	log.Println("Starting HTTP server on 172.31.88.128:9090...")
-	if err := http.ListenAndServe("172.31.88.128:9090", nil); err != nil {
+	if err := http.ListenAndServe("172.31.88.135:9090", nil); err != nil {
 		log.Fatalf("Failed to start HTTP server: %v\n", err)
 	}
 }
