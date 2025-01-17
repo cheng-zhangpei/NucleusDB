@@ -132,7 +132,7 @@ func handleStat(writer http.ResponseWriter, request *http.Request) {
 }
 
 func handleMerge(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet {
+	if request.Method != http.MethodPost {
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -463,11 +463,12 @@ func main() {
 	http.HandleFunc("/bitcask/delete", handleDelete)
 	http.HandleFunc("/bitcask/listkeys", handleListKeys)
 	http.HandleFunc("/bitcask/stat", handleStat)
-	http.HandleFunc("/bitcask/prefix", handlePrefix) // 新增前缀查询路由
+	http.HandleFunc("/bitcask/prefix", handlePrefix)
+	http.HandleFunc("/bitcask/merge", handleMerge)
 	http.HandleFunc("/memory/get", handleMemoryGet)
 	http.HandleFunc("/memory/set", handleMemorySet)
 	http.HandleFunc("/memory/search", handleMemorySearch)
-	http.HandleFunc("/memory/delete", handleDelete)
+	http.HandleFunc("/memory/delete", handleMemoryDelete)
 	http.HandleFunc("/memory/create", handleCreateMemoryMeta)
 	http.HandleFunc("/memory/compress", handleCompress)
 	http.HandleFunc("/health", healthyCheck)
