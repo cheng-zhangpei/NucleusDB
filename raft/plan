@@ -1,0 +1,15 @@
+the implementation of raft in ComDB
+1. 领导者选举：
+    -> 实现 raft/ 中的 becomeCandidate 和 becomeLeader 方法。
+    -> 实现选举超时和投票机制。
+    日志复制：
+    -> 实现 raft/ 中的 AppendEntries RPC 方法。
+    -> 实现日志条目的复制和提交逻辑。
+    状态机应用：
+    -> 实现状态机的接口，将日志条目应用到状态机。
+2. 日志存储：
+    -> 实现 storage/ 中的 LogStore 接口，支持日志的存储和读取。
+3. 状态存储：
+    -> 实现 storage/ 中的 HardState 和 ConfState 的持久化。
+4. RPC 实现：
+    ->使用 gRPC 或其他 RPC 框架实现 Raft 的 RPC 方法（如 AppendEntries、RequestVote）。

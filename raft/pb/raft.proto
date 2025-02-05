@@ -1,0 +1,78 @@
+syntax = "proto2";
+package pb;
+
+//import "gogoproto/gogo.proto";
+
+//option (gogoproto.marshaler_all) = true;
+//option (gogoproto.sizer_all) = true;
+//option (gogoproto.unmarshaler_all) = true;
+
+// msg type in the whole process of raft
+enum MessageType {
+  MsgHup             = 0;  // Trigger election
+  MsgBeat            = 1;  // Heartbeat
+  MsgProp            = 2;  // Propose log entry
+  MsgApp             = 3;  // Append log entries
+  MsgAppResp         = 4;  // Response to append
+  MsgVote            = 5;  // Request vote
+  MsgVoteResp        = 6;  // Response to vote
+  MsgSnap            = 7;  // Install snapshot
+  MsgHeartbeat       = 8;  // Leader heartbeat
+  MsgHeartbeatResp   = 9;  // Response to heartbeat
+}
+
+message Message {
+  required MessageType type = 1;
+  optional uint64 to = 2;
+  optional uint64 from = 3;
+  optional uint64 term = 4;
+  optional uint64 index = 6;
+  repeated Entry entries = 7;
+  optional uint64 commit = 8;
+  optional Snapshot snapshot = 9;
+  optional bool reject = 10;
+  optional bytes context = 12;
+}
+
+// Core data structures
+// some variant will not be used,but I still leave it here for future modification
+// like: I may do not have enough time to implement snapshot and dynamic config change,which is the advanced application of raft
+enum EntryType {
+  EntryNormal       = 0;
+  EntryConfChange   = 1;
+}
+
+message Entry {
+  required uint64 term = 2;
+  required uint64 index = 3;
+  required EntryType type = 1;
+  optional bytes data = 4;
+}
+
+message Snapshot {
+  optional bytes data = 1;
+  optional SnapshotMetadata metadata = 2;
+}
+
+message SnapshotMetadata {
+  required ConfState conf_state = 1;
+  required uint64 index = 2;
+  required uint64 term = 3;
+}
+
+message ConfState {
+  repeated uint64 voters = 1;
+  repeated uint64 learners = 2;
+}
+
+message ConfChange {
+  required ConfChangeType type = 1;
+  required uint64 node_id = 2;
+  optional bytes context = 3;
+}
+
+enum ConfChangeType {
+  ConfChangeAddNode        = 0;
+  ConfChangeRemoveNode     = 1;
+  ConfChangeAddLearnerNode = 3;
+}

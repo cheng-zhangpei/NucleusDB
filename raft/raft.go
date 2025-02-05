@@ -27,11 +27,11 @@ type RaftConfig struct {
 	// candidate and start an election. ElectionTick must be greater than
 	// HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid
 	// unnecessary leader switching.
-	ElectionTick int
+	ElectionTick uint64
 	// HeartbeatTick is the number of Node.Tick invocations that must pass between
 	// heartbeats. That is, a leader sends heartbeat messages to maintain its
 	// leadership every HeartbeatTick ticks.
-	HeartbeatTick int
+	HeartbeatTick uint64
 	// MaxSizePerMsg limit the size of byte message that user can submit
 	MaxSizePerMsg uint64
 	// MaxCommittedSizePerReady limits the size of the committed entries which
@@ -42,6 +42,8 @@ type RaftConfig struct {
 	// limit is exceeded, proposals will begin to return ErrProposalDropped
 	// errors. Note: 0 for no limit.
 	MaxUncommittedEntriesSize uint64
+
+	CheckQuorum bool
 }
 
 // validate raft config validation
@@ -87,5 +89,63 @@ type raft struct {
 
 	//prs tracker.ProgressTracker
 	checkQuorum bool
-	preVote     bool
+
+	maxMsgSize         uint64
+	maxUncommittedSize uint64
+	electionTimeout    uint64
+	heartbeatTimeout   uint64
+}
+
+func newRaft(config *RaftConfig) *raft {
+	if err := config.validate(); err != nil {
+		panic(err.Error())
+	}
+	// raft log initialization
+
+	//raftlog := newLogWithSize(config.Storage, c.Logger, c.MaxCommittedSizePerReady)
+	// state initializetion
+	//hs, cs, err := c.Storage.InitialState()
+	//if err != nil {
+	//	panic(err)
+	//}
+
+	r := &raft{
+		id:   config.ID,
+		lead: None,
+		//raftLog:                   raftlog,
+		maxMsgSize:         config.MaxSizePerMsg,
+		maxUncommittedSize: config.MaxUncommittedEntriesSize,
+
+		//prs:                       tracker.MakeProgressTracker(c.MaxInflightMsgs),
+		electionTimeout:  config.ElectionTick,
+		heartbeatTimeout: config.HeartbeatTick,
+		checkQuorum:      config.CheckQuorum,
+	}
+
+	//cfg, prs, err := confchange.Restore(confchange.Changer{
+	//	Tracker:   r.prs,
+	//	LastIndex: raftlog.lastIndex(),
+	//}, cs)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//assertConfStatesEquivalent(r.logger, cs, r.switchToConfig(cfg, prs))
+	//
+	//if !IsEmptyHardState(hs) {
+	//	r.loadState(hs)
+	//}
+	//if c.Applied > 0 {
+	//	raftlog.appliedTo(c.Applied)
+	//}
+
+	//r.becomeFollower(r.Term, None)
+
+	//var nodesStrs []string
+	//for _, n := range r.prs.VoterNodes() {
+	//	nodesStrs = append(nodesStrs, fmt.Sprintf("%x", n))
+	//}
+
+	//log.Printf("newRaft %x [peers: [%s], term: %d, commit: %d, applied: %d]",
+	//	r.id, strings.Join(nodesStrs, ","), r.Term, r.raftLog.committed, r.raftLog.applied)
+	return r
 }
