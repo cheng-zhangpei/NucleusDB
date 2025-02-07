@@ -1,8 +1,4 @@
-// manage the transmission between different state
-
 package tracker
-
-import "ComDB/raft"
 
 // Progress 代表单个节点的日志复制进度和状态。
 // 每个节点都会维护自身的进度信息。
@@ -16,6 +12,13 @@ type Progress struct {
 	// ProbeSent 在 StateProbe 状态下，表示已发送探测消息，直到重置前暂停发送新消息。
 	ProbeSent bool
 }
+type StateType uint64
+
+const (
+	StateFollower StateType = iota
+	StateCandidate
+	StateLeader
+)
 
 // BecomeFollower 将节点状态切换为 Follower（跟随者）。
 // Follower 会响应 Leader 的心跳和日志复制请求。
@@ -83,4 +86,4 @@ func (pr *Progress) String() string { return "" }
 
 // ResetState 重置 Progress 的状态和相关字段。
 // 在状态切换或其他状态变化时调用，确保状态的一致性。
-func (pr *Progress) ResetState(state raft.StateType) {}
+func (pr *Progress) ResetState(state StateType) {}
