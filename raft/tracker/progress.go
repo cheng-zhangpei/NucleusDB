@@ -1,7 +1,6 @@
 package tracker
 
-// Progress 代表单个节点的日志复制进度和状态。
-// 每个节点都会维护自身的进度信息。
+// Progress 代表单个节点的日志复制进度和状态。maintained by leader
 type Progress struct {
 	// Match 已知匹配的最高日志索引，表示跟随者已成功复制到该索引的日志条目。
 	Match uint64

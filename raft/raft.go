@@ -2,12 +2,15 @@ package raft
 
 import (
 	"ComDB/raft/pb"
+	"ComDB/raft/tracker"
 	_ "ComDB/raft/tracker"
 	_ "bytes"
 	"errors"
+	"fmt"
 	"golang.org/x/exp/rand"
 	"log"
 	"math"
+	"sort"
 	"sync"
 	"time"
 )
@@ -98,7 +101,9 @@ type raft struct {
 	// the state of current node
 	state StateType
 	// the message info: compile by protobuf
-	//msgs []pb.Message
+	msgs []*pb.Message
+	// record if the peer vote
+	votes []bool
 	// electionElapsed the interval of election
 	electionElapsed uint64
 	// heartbeatElapsed heartbeat interval
@@ -113,8 +118,9 @@ type raft struct {
 	electionTimeout           int
 	heartbeatTimeout          uint64
 	// to trigger different function like heartbeat or election
-	tick func()
-	step stepFunc
+	tick           func()
+	step           stepFunc
+	processTracker tracker.ProgressTracker
 }
 
 func newRaft(config *RaftConfig) *raft {
@@ -282,6 +288,8 @@ func stepCandidate(r *raft, msg *pb.Message) error { return nil }
 
 // stepFollower send message to follower
 func stepFollower(r *raft, msg *pb.Message) error { return nil }
+
+// Step the entry of all the message
 func (r *raft) Step(msg *pb.Message) error {
 	// Check if the message has a higher term than the current Raft node's term
 	// 如果消息的任期大于当前 Raft 节点的任期
@@ -325,7 +333,6 @@ func (r *raft) Step(msg *pb.Message) error {
 }
 
 // =======================================================================handle different message ==============================================
-
 // startElection触发选举流程，使当前节点转变为候选者并开始新的选举。
 // only candidate
 func (r *raft) startElection(msg *pb.Message) {
@@ -333,7 +340,16 @@ func (r *raft) startElection(msg *pb.Message) {
 		log.Println("the node already is leader")
 		return
 	}
-
+	r.becomeCandidate()
+	// vote self
+	r.votes[r.id] = true
+	// send vote request
+	r.sendVoteRequests()
+	// judge if the candidate can be the leader
+	if r.poll(r.id, true) == true {
+		r.becomeLeader()
+		return
+	}
 }
 
 // handleVoteRequest处理投票请求消息，决定是否授予投票。
@@ -354,6 +370,83 @@ func (r *raft) handleAppendEntries(msg *pb.Message) {
 // handleAppendEntriesResponse处理日志追加响应消息，更新领导者进度。
 func (r *raft) handleAppendEntriesResponse(msg *pb.Message) {
 
+}
+
+// send put the msg into the msg pending area.send msg then node is ready
+// 在Raft 的主循环中，节点会定期调用 Ready 方法来检查是否有需要处理的工作。
+func (r *raft) send(msg *pb.Message) {
+	if *msg.From == None {
+		*msg.From = r.id
+	}
+	if *msg.Type == pb.MessageType_MsgVote || *msg.Type == pb.MessageType_MsgVoteResp {
+		if *msg.Term == 0 {
+			panic(fmt.Sprintf("term should be set when sending %s", msg.Type))
+		}
+	} else {
+		if *msg.Term != 0 {
+			panic(fmt.Sprintf("term should not be set when sending %s (was %d)", msg.Type, msg.Term))
+		}
+	}
+	r.msgs = append(r.msgs, msg)
+}
+func (r *raft) poll(id uint64, voteGranted bool) bool {
+	// 记录投票
+	r.votes[id] = voteGranted
+
+	// 更新投票状态
+	granted, rejected := 0, 0
+	for _, voted := range r.votes {
+		if voted {
+			granted++
+		} else {
+			rejected++
+		}
+	}
+
+	// 判断是否赢得多数票
+	if granted > len(r.votes)/2 {
+		log.Println("%x won the election with %d votes", r.id, granted)
+		return true
+	} else if rejected > len(r.votes)/2 {
+		log.Println("%x lost the election with %d votes", r.id, rejected)
+		return false
+	}
+	return false
+}
+func (r *raft) sendVoteRequests() {
+	var ids []uint64
+	{
+		// get all raftNode ids
+		idMap := r.processTracker.Votes
+		ids = make([]uint64, 0, len(idMap))
+		for id := range idMap {
+			ids = append(ids, id)
+		}
+		// sort id array
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+	for _, id := range ids {
+		if id == r.id {
+			continue
+		}
+		r.sendVoteRequest(id)
+	}
+}
+
+func (r *raft) sendVoteRequest(id uint64) {
+	// 创建一个变量来存储 MessageType_MsgVote，并取其地址
+	var msgType pb.MessageType = pb.MessageType_MsgVote
+
+	msg := &pb.Message{
+		Type: &msgType, // *MessageType
+		Term: &r.Term,  // *uint64
+		To:   &id,      // *uint64
+		From: &r.id,    // *uint64
+		//todo after storage finished
+		//Index:   &r.raftLog.lastIndex(),     // *uint64
+		//LogTerm: &r.raftLog.lastTerm(),      // *uint64
+	}
+	r.send(msg)
 }
 
 func (r *raft) resetRandomizedElectionTimeout() {
