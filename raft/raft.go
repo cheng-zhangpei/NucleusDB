@@ -346,28 +346,61 @@ func (r *raft) startElection(msg *pb.Message) {
 	// send vote request
 	r.sendVoteRequests()
 	// judge if the candidate can be the leader
+
+}
+
+// handleVoteRequest处理投票请求消息，决定是否授予投票。
+func (r *raft) handleVoteRequest(msg *pb.Message) {
+	if r.state == StateLeader {
+		log.Println("leader can not handle the vote request")
+		return
+	}
+	// two factor: 1. the node receive the msg that it has voted. 2. do not vote yet
+	canVote := r.Vote == *msg.From ||
+		(r.Vote == None && r.lead == None)
+	//if canVote && r.raftLog.isUpToDate(m.Index, m.LogTerm) { // judge if the candidate have the qualification to ask for vote
+	//
+	//}
+	// If votedFor is null or candidateId, and candidate’s log is at
+	// least as up-to-date as receiver’s log, grant vote
+	var msgType pb.MessageType = pb.MessageType_MsgVoteResp
+	if canVote {
+		// todo after storage finished
+		//log.Println("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d",
+		//	r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, m.From, m.LogTerm, m.Index, r.Term)
+
+		r.send(&pb.Message{To: msg.From, Term: msg.Term, Type: &msgType})
+		r.electionElapsed = 0
+		r.Vote = *msg.From
+	} else {
+		// todo after storage finished
+		//log.Println("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
+		//	r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term)
+		var reject = true
+		r.send(&pb.Message{To: msg.From, Term: &r.Term, Type: &msgType, Reject: &reject})
+	}
+
+}
+
+// handleVoteResponse 处理投票响应消息，更新投票状态并检查是否当选。execute by leader
+func (r *raft) handleVoteResponse(msg *pb.Message) {
+	// update the value
+	r.votes[*msg.From] = true
+
 	if r.poll(r.id, true) == true {
 		r.becomeLeader()
 		return
 	}
 }
 
-// handleVoteRequest处理投票请求消息，决定是否授予投票。
-func (r *raft) handleVoteRequest(msg *pb.Message) {
-
-}
-
-// handleVoteResponse处理投票响应消息，更新投票状态并检查是否当选。
-func (r *raft) handleVoteResponse(msg *pb.Message) {
-
-}
-
-// handleAppendEntries处理日志追加请求，更新日志并发送响应。
+// handleAppendEntries 处理日志追加请求，更新日志并发送响应。
+// todo after storage finished
 func (r *raft) handleAppendEntries(msg *pb.Message) {
 
 }
 
-// handleAppendEntriesResponse处理日志追加响应消息，更新领导者进度。
+// handleAppendEntriesResponse 处理日志追加响应消息，更新领导者进度。
+// todo after storage finished
 func (r *raft) handleAppendEntriesResponse(msg *pb.Message) {
 
 }
@@ -389,6 +422,7 @@ func (r *raft) send(msg *pb.Message) {
 	}
 	r.msgs = append(r.msgs, msg)
 }
+
 func (r *raft) poll(id uint64, voteGranted bool) bool {
 	// 记录投票
 	r.votes[id] = voteGranted
