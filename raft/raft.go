@@ -65,6 +65,7 @@ type RaftConfig struct {
 	MaxUncommittedEntriesSize uint64
 
 	CheckQuorum bool
+	Storage     Storage
 }
 
 // validate raft config validation
@@ -129,17 +130,17 @@ func newRaft(config *RaftConfig) *raft {
 	}
 	// raft log initialization
 
-	//raftlog := newLogWithSize(config.Storage, c.Logger, c.MaxCommittedSizePerReady)
+	raftlog := newLogWithSize(config.Storage, config.MaxCommittedSizePerReady)
 	// state initializetion
-	//hs, cs, err := c.Storage.InitialState()
+	//hs, cs, err := config.Storage.InitialState()
 	//if err != nil {
 	//	panic(err)
 	//}
 
 	r := &raft{
-		id:   config.ID,
-		lead: None,
-		//raftLog:                   raftlog,
+		id:                 config.ID,
+		lead:               None,
+		raftLog:            raftlog,
 		maxMsgSize:         config.MaxSizePerMsg,
 		maxUncommittedSize: config.MaxUncommittedEntriesSize,
 		//prs:                       tracker.MakeProgressTracker(c.MaxInflightMsgs),
@@ -200,14 +201,15 @@ func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 
 // tickElection is run by followers and candidates after r.electionTimeout.
 func (r *raft) tickElection() {
-	r.electionElapsed++
+	r.electionElapsed++ // so this is not use tick of sys to count heartBeat
 
-	//if r.promotable() && r.pastElectionTimeout() {
-	//	r.electionElapsed = 0
-	//	if err := r.Step(pb.Message{From: r.id, Type: pb.MsgHup}); err != nil {
-	//		r.logger.Debugf("error occurred during election: %v", err)
-	//	}
-	//}
+	if r.pastElectionTimeout() {
+		r.electionElapsed = 0
+		var msgType pb.MessageType = pb.MessageType_MsgHup
+		if err := r.Step(&pb.Message{From: &r.id, Type: &msgType}); err != nil {
+			log.Println("error occurred during election: %v", err)
+		}
+	}
 }
 
 // tickHeartbeat is run by leaders to send a MsgBeat after r.heartbeatTimeout.
@@ -218,10 +220,10 @@ func (r *raft) tickHeartbeat() {
 	if r.electionElapsed >= uint64(r.electionTimeout) {
 		r.electionElapsed = 0
 		if r.checkQuorum {
-			// todo: step....
-			//if err := r.Step(pb.Message{From: r.id, Type: pb.MsgCheckQuorum}); err != nil {
-			//	r.logger.Debugf("error occurred during checking sending heartbeat: %v", err)
-			//}
+			var msgType pb.MessageType = pb.MessageType_MsgCheckQuorum
+			if err := r.Step(&pb.Message{From: &r.id, Type: &msgType}); err != nil {
+				log.Println("error occurred during checking sending heartbeat: %v", err)
+			}
 		}
 	}
 	//
@@ -231,10 +233,10 @@ func (r *raft) tickHeartbeat() {
 	// ==================heartbeat====================
 	if r.heartbeatElapsed >= r.heartbeatTimeout {
 		r.heartbeatElapsed = 0
-		// todo: step....
-		//if err := r.Step(pb.Message{From: r.id, Type: pb.MsgBeat}); err != nil {
-		//	r.logger.Debugf("error occurred during checking sending heartbeat: %v", err)
-		//}
+		var msgType pb.MessageType = pb.MessageType_MsgBeat
+		if err := r.Step(&pb.Message{From: &r.id, Type: &msgType}); err != nil {
+			log.Printf("error occurred during checking sending heartbeat: %v\n", err)
+		}
 	}
 }
 
@@ -244,6 +246,7 @@ func (r *raft) becomeFollower(term uint64, lead uint64) {
 	r.tick = r.tickElection
 	r.lead = lead
 	r.state = StateFollower
+	r.step = stepFollower
 	log.Println("%x became follower at term %d", r.id, r.Term)
 }
 
@@ -256,6 +259,8 @@ func (r *raft) becomeCandidate() {
 	r.tick = r.tickElection
 	r.Vote = r.id
 	r.state = StateCandidate
+	r.step = stepCandidate
+
 	log.Println("%x became candidate at term %d", r.id, r.Term)
 }
 
@@ -269,7 +274,7 @@ func (r *raft) becomeLeader() {
 	r.lead = r.id
 	r.state = StateLeader
 	//r.pendingConfIndex = r.raftLog.lastIndex()
-
+	r.step = stepLeader
 	emptyEnt := pb.Entry{Data: nil}
 	if !r.appendEntry(emptyEnt) {
 		// This won't happen because we just called reset() above.
@@ -280,8 +285,12 @@ func (r *raft) becomeLeader() {
 }
 
 // ===========================================================state change==========================================
+// todo different disposal of status
 // stepLeader send message to leader
-func stepLeader(r *raft, msg *pb.Message) error { return nil }
+func stepLeader(r *raft, msg *pb.Message) error {
+
+	return nil
+}
 
 // stepCandidate send message to candidate
 func stepCandidate(r *raft, msg *pb.Message) error { return nil }
@@ -314,20 +323,13 @@ func (r *raft) Step(msg *pb.Message) error {
 	// MsgVote：处理投票请求
 	case pb.MessageType_MsgVote:
 		r.handleVoteRequest(msg)
-
-	// MsgVoteResp：处理投票响应
-	case pb.MessageType_MsgVoteResp:
-		r.handleVoteResponse(msg)
-
-	// MsgAppend：处理日志追加请求
-	case pb.MessageType_MsgApp:
-		r.handleAppendEntries(msg)
-
-	// MsgAppendResp：处理日志追加响应
-	case pb.MessageType_MsgAppResp:
-		r.handleAppendEntriesResponse(msg)
+	default:
+		// down to the detail disposal of different status
+		err := r.step(r, msg)
+		if err != nil {
+			return err
+		}
 	}
-
 	// 返回 nil 表示处理成功
 	return nil
 }
@@ -365,17 +367,15 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 	// least as up-to-date as receiver’s log, grant vote
 	var msgType pb.MessageType = pb.MessageType_MsgVoteResp
 	if canVote {
-		// todo after storage finished
-		//log.Println("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d",
-		//	r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, m.From, m.LogTerm, m.Index, r.Term)
+		log.Println("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d",
+			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
 
 		r.send(&pb.Message{To: msg.From, Term: msg.Term, Type: &msgType})
 		r.electionElapsed = 0
 		r.Vote = *msg.From
 	} else {
-		// todo after storage finished
-		//log.Println("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
-		//	r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term)
+		log.Println("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
+			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
 		var reject = true
 		r.send(&pb.Message{To: msg.From, Term: &r.Term, Type: &msgType, Reject: &reject})
 	}
@@ -391,18 +391,6 @@ func (r *raft) handleVoteResponse(msg *pb.Message) {
 		r.becomeLeader()
 		return
 	}
-}
-
-// handleAppendEntries 处理日志追加请求，更新日志并发送响应。
-// todo after storage finished
-func (r *raft) handleAppendEntries(msg *pb.Message) {
-
-}
-
-// handleAppendEntriesResponse 处理日志追加响应消息，更新领导者进度。
-// todo after storage finished
-func (r *raft) handleAppendEntriesResponse(msg *pb.Message) {
-
 }
 
 // send put the msg into the msg pending area.send msg then node is ready
@@ -470,15 +458,14 @@ func (r *raft) sendVoteRequests() {
 func (r *raft) sendVoteRequest(id uint64) {
 	// 创建一个变量来存储 MessageType_MsgVote，并取其地址
 	var msgType pb.MessageType = pb.MessageType_MsgVote
-
+	var lastIndex uint64 = r.raftLog.lastIndex()
 	msg := &pb.Message{
-		Type: &msgType, // *MessageType
-		Term: &r.Term,  // *uint64
-		To:   &id,      // *uint64
-		From: &r.id,    // *uint64
-		//todo after storage finished
-		//Index:   &r.raftLog.lastIndex(),     // *uint64
-		//LogTerm: &r.raftLog.lastTerm(),      // *uint64
+		Type:  &msgType,   // *MessageType
+		Term:  &r.Term,    // *uint64
+		To:    &id,        // *uint64
+		From:  &r.id,      // *uint64
+		Index: &lastIndex, // *uint64
+
 	}
 	r.send(msg)
 }
@@ -493,4 +480,32 @@ func (r *lockedRand) Intn(n int) int {
 	v := r.rand.Intn(n)
 	r.mu.Unlock()
 	return v
+}
+func (r *raft) pastElectionTimeout() bool {
+	return r.electionElapsed >= uint64(r.randomizedElectionTimeout)
+}
+
+func (l *raftLog) lastTerm() uint64 {
+	t, err := l.term(l.lastIndex())
+	if err != nil {
+		log.Fatalln("unexpected error when getting the last term (%v)", err)
+	}
+	return t
+}
+
+func (l *raftLog) term(i uint64) (uint64, error) {
+	// the valid term range is [index of dummy entry, last index]
+	dummyIndex := l.firstIndex() - 1
+	if i < dummyIndex || i > l.lastIndex() {
+		// TODO: return an error instead?
+		return 0, nil
+	}
+	t, err := l.storage.Term(i)
+	if err == nil {
+		return t, nil
+	}
+	if err == ErrCompacted || err == ErrUnavailable {
+		return 0, err
+	}
+	panic(err)
 }

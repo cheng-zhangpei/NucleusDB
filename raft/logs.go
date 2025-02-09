@@ -1,6 +1,9 @@
 package raft
 
-import "log"
+import (
+	"ComDB/raft/pb"
+	"log"
+)
 
 // operation for log entries
 type raftLog struct {
@@ -23,14 +26,90 @@ func newLogWithSize(storage Storage, maxNextEntsSize uint64) *raftLog {
 	}
 	firstIndex, err := storage.FirstIndex()
 	if err != nil {
-		panic(err) // TODO(bdarnell)
+		panic(err)
 	}
 	_, err = storage.LastIndex()
 	if err != nil {
-		panic(err) // TODO(bdarnell)
+		panic(err)
 	}
 	// Initialize our committed and applied pointers to the time of the last compaction.
 	log.committed = firstIndex - 1
 	log.applied = firstIndex - 1
 	return log
+}
+
+// nextEnts returns all the available entries for execution.
+// If applied is smaller than the index of snapshot, it returns all committed
+// entries after the index of snapshot.
+func (l *raftLog) nextEnts() (ents []pb.Entry) {
+	off := max(l.applied+1, l.firstIndex())
+	if l.committed+1 > off {
+		ents, err := l.slice(off, l.committed+1, l.maxNextEntsSize)
+		if err != nil {
+			log.Println("unexpected error when getting unapplied entries (%v)", err)
+		}
+		return ents
+	}
+	return nil
+}
+
+func (l *raftLog) firstIndex() uint64 {
+	index, err := l.storage.FirstIndex()
+	if err != nil {
+		panic(err) // TODO(bdarnell)
+	}
+	return index
+}
+
+func (l *raftLog) slice(lo, hi, maxSize uint64) ([]pb.Entry, error) {
+	err := l.mustCheckOutOfBounds(lo, hi)
+	if err != nil {
+		return nil, err
+	}
+	if lo == hi {
+		return nil, nil
+	}
+	var ents []pb.Entry
+	// 直接从存储中读取 lo 到 hi 的条目，不考虑 unstable 的 offset
+	// todo we just read log from memory,sync module do not finished yet
+	storedEnts, err := l.storage.Entries(lo, hi, maxSize)
+	if err == ErrCompacted {
+		return nil, err
+	} else if err == ErrUnavailable {
+		log.Fatalln("entries[%d:%d) is unavailable from storage", lo, hi)
+	} else if err != nil {
+		panic(err)
+	}
+
+	// 检查条目数量是否超过了 maxSize
+	if got := uint64(len(storedEnts)); got > maxSize {
+		storedEnts = storedEnts[:maxSize]
+	}
+
+	ents = storedEnts
+	return ents, nil
+}
+
+func (l *raftLog) mustCheckOutOfBounds(lo, hi uint64) error {
+	if lo > hi {
+		log.Fatalln("invalid slice %d > %d", lo, hi)
+	}
+	fi := l.firstIndex()
+	if lo < fi {
+		return ErrCompacted
+	}
+
+	length := l.lastIndex() + 1 - fi
+	if hi > fi+length {
+		log.Fatalln("slice[%d,%d) out of bound [%d,%d]", lo, hi, fi, l.lastIndex())
+	}
+	return nil
+}
+
+func (l *raftLog) lastIndex() uint64 {
+	i, err := l.storage.LastIndex()
+	if err != nil {
+		panic(err) // TODO(bdarnell)
+	}
+	return i
 }

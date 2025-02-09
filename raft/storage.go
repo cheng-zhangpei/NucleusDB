@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+const RaftPefix string = "raft-log-entry"
+
 // ErrCompacted is returned by Storage.Entries/Compact when a requested
 // index is unavailable because it predates the last snapshot.
 var ErrCompacted = errors.New("requested index is unavailable due to compaction")
@@ -57,14 +59,27 @@ type MemoryStorage struct {
 	// only neec to save hardState
 	hardState HardState
 	ents      []pb.Entry
+	DB        *ComDB.DB
+	// 新增：缓冲区，存储未持久化的日志条目
+	walBuffer []pb.Entry
+	// 新增：写盘通道，通知写盘线程写盘
+	commitChan chan struct{}
 }
 
 // NewMemoryStorage creates an empty MemoryStorage.
-func NewMemoryStorage() *MemoryStorage {
+func NewMemoryStorage() (*MemoryStorage, error) {
+	defaultOptions := ComDB.DefaultOptions
+	db, err := ComDB.Open(defaultOptions)
+	if err != nil {
+		return nil, err
+	}
 	return &MemoryStorage{
 		// When starting from scratch populate the list with a dummy entry at term zero.
-		ents: make([]pb.Entry, 1),
-	}
+		DB:         db,
+		ents:       make([]pb.Entry, 1),
+		walBuffer:  make([]pb.Entry, 1),
+		commitChan: make(chan struct{}, 3), // 缓冲通道，避免阻塞
+	}, nil
 }
 
 // InitialState implements the Storage interface.
@@ -122,6 +137,7 @@ func (ms *MemoryStorage) LastIndex() (uint64, error) {
 	return ms.lastIndex(), nil
 }
 
+// *ms.ents[0].Index is the log entry first pos in the global log entry
 func (ms *MemoryStorage) lastIndex() uint64 {
 	return *ms.ents[0].Index + uint64(len(ms.ents)) - 1
 }
@@ -211,7 +227,7 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 }
 
 // Append the new entries to storage.
-// entries[0].Index > ms.entries[0].Index
+// entries[0].Index > ms.entries[0].Index -> entries is a series of log Entry that want to save into tha WAL
 func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -243,5 +259,63 @@ func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 		log.Println("missing log entry [last: %d, append at: %d]",
 			ms.lastIndex(), entries[0].Index)
 	}
+	return nil
+}
+
+// AppendWAL the new entries to the WAL buffer.
+func (ms *MemoryStorage) AppendWAL(entries []pb.Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	ms.Lock()
+	defer ms.Unlock()
+
+	// 将新条目追加到缓冲区
+	ms.walBuffer = append(ms.walBuffer, entries...)
+	// 通知写盘线程检查缓冲区,just give a empty struct
+	ms.commitChan <- struct{}{}
+	return nil
+}
+
+// syncEntry asynchronously flushes the WAL buffer to persistent storage.
+func (ms *MemoryStorage) syncEntry() {
+	// 启动异步写盘 goroutine
+	go func() {
+		for {
+			select {
+			// get info from channel
+			case <-ms.commitChan:
+				// 触发写盘
+				ms.flushWAL()
+			}
+		}
+	}()
+}
+
+// flushWAL flushes the WAL buffer to persistent storage.
+func (ms *MemoryStorage) flushWAL() {
+	ms.Lock()
+	if len(ms.walBuffer) == 0 {
+		ms.Unlock()
+		return // 缓冲区为空，无需写盘
+	}
+
+	// 将缓冲区中的条目写入持久化存储（例如，写入文件或数据库）
+	// 这里假设你有一个持久化方法，例如 writeToDisk
+	if err := ms.writeToDisk(ms.walBuffer); err != nil {
+		log.Printf("failed to flush WAL: %v", err)
+	}
+	// 清空缓冲区
+	ms.walBuffer = []pb.Entry{}
+	ms.Unlock()
+}
+
+// writeToDisk simulates writing entries to persistent storage.
+// 在实际实现中，你需要根据你的存储层（如文件系统或数据库）实现 this method.
+func (ms *MemoryStorage) writeToDisk(entries []pb.Entry) error {
+	// todo 模拟写盘操作
+
+	log.Printf("flushing %d entries to disk", len(entries))
 	return nil
 }
