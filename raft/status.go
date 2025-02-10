@@ -1,5 +1,7 @@
 package raft
 
+import "ComDB/raft/tracker"
+
 // HardStatus the message that should be saved in db
 type HardStatus struct {
 }
@@ -16,13 +18,44 @@ type SoftState struct {
 	Lead      uint64 // must use atomic operations to access; keep 64-bit aligned.
 	RaftState StateType
 }
-type BasicStatus struct {
+type BaseStatus struct {
 	ID uint64
 
 	HardState
 	SoftState
+	Progress map[uint64]tracker.Progress
 
 	Applied uint64
+}
 
-	LeadTransferee uint64
+func getProgressCopy(r *raft) map[uint64]tracker.Progress {
+	m := make(map[uint64]tracker.Progress)
+	r.processTracker.Visit(func(id uint64, pr *tracker.Progress) {
+		p := *pr
+		//p.Inflights = pr.Inflights.Clone()
+		pr = nil
+
+		m[id] = p
+	})
+	return m
+}
+
+func getBasicStatus(r *raft) BaseStatus {
+	s := BaseStatus{
+		ID: r.id,
+	}
+	s.HardState = *r.hardState()
+	s.SoftState = *r.softState()
+	s.Applied = r.raftLog.applied
+	return s
+}
+
+// getStatus gets a copy of the current raft status.
+func getStatus(r *raft) BaseStatus {
+	var s BaseStatus
+	s = getBasicStatus(r)
+	if s.RaftState == StateLeader {
+		s.Progress = getProgressCopy(r)
+	}
+	return s
 }

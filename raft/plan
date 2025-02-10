@@ -13,3 +13,7 @@ the implementation of raft in ComDB
     -> 实现 storage/ 中的 HardState 和 ConfState 的持久化。
 4. RPC 实现：
     ->使用 gRPC 或其他 RPC 框架实现 Raft 的 RPC 方法（如 AppendEntries、RequestVote）。
+
++====================================================================================
+
+如果参考etcd的代码实现raft过于复杂，没法完全理解，所以需要自己从头思考一下raft到底需要什么，先不去思考一些分布式状态很复杂的情况，从外到内进行思考

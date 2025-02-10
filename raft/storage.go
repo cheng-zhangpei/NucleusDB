@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"ComDB"
 	"ComDB/raft/pb"
 	"errors"
 	"log"
@@ -25,10 +24,8 @@ var ErrUnavailable = errors.New("requested entry at index is unavailable")
 // Storage 用异步批量写入的方式优化写入性能。外部的写入请求先由一个 goroutine 写入内存中的 WAL 缓冲区，然后由另一个 goroutine 定期将缓冲区中的日志条目批量写入磁盘
 // ComDBStorage this part is about storage of the log entry and some related operation,
 type Storage interface {
-	// load log entry from the DB
-	loadIndex() error
 	// InitialState returns the saved HardState and ConfState information.
-	InitialState() (HardState, pb.ConfState, error)
+	InitialState() (HardState, error)
 	// Entries returns a slice of log entries in the range [lo,hi).
 	// MaxSize limits the total size of the log entries returned, but
 	// Entries returns at least one entry if any.
@@ -46,10 +43,6 @@ type Storage interface {
 	// first log entry is not available).
 	FirstIndex() (uint64, error)
 	// sync the entries by thread (async)
-	syncEntry()
-}
-type ComDBStorage struct {
-	db *ComDB.DB
 }
 type MemoryStorage struct {
 	// Protects access to all fields. Most methods of MemoryStorage are
@@ -59,26 +52,13 @@ type MemoryStorage struct {
 	// only neec to save hardState
 	hardState HardState
 	ents      []pb.Entry
-	DB        *ComDB.DB
-	// 新增：缓冲区，存储未持久化的日志条目
-	walBuffer []pb.Entry
-	// 新增：写盘通道，通知写盘线程写盘
-	commitChan chan struct{}
 }
 
 // NewMemoryStorage creates an empty MemoryStorage.
 func NewMemoryStorage() (*MemoryStorage, error) {
-	defaultOptions := ComDB.DefaultOptions
-	db, err := ComDB.Open(defaultOptions)
-	if err != nil {
-		return nil, err
-	}
 	return &MemoryStorage{
 		// When starting from scratch populate the list with a dummy entry at term zero.
-		DB:         db,
-		ents:       make([]pb.Entry, 1),
-		walBuffer:  make([]pb.Entry, 1),
-		commitChan: make(chan struct{}, 3), // 缓冲通道，避免阻塞
+		ents: make([]pb.Entry, 1),
 	}, nil
 }
 
@@ -101,7 +81,7 @@ func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 	defer ms.Unlock()
 	// remeber ents is a cache area,Index is the global pos of the Entry including the entries saved in the DB
 	offset := ms.ents[0].Index
-	if lo <= *offset {
+	if lo <= offset {
 		return nil, ErrCompacted
 	}
 	if hi > ms.lastIndex()+1 {
@@ -112,7 +92,7 @@ func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 		return nil, ErrUnavailable
 	}
 
-	ents := ms.ents[lo-*offset : hi-*offset]
+	ents := ms.ents[lo-offset : hi-offset]
 	return ents, nil
 }
 
@@ -121,13 +101,13 @@ func (ms *MemoryStorage) Term(i uint64) (uint64, error) {
 	ms.Lock()
 	defer ms.Unlock()
 	offset := ms.ents[0].Index
-	if i < *offset {
+	if i < offset {
 		return 0, ErrCompacted
 	}
-	if int(i-*offset) >= len(ms.ents) {
+	if int(i-offset) >= len(ms.ents) {
 		return 0, ErrUnavailable
 	}
-	return *ms.ents[i-*offset].Term, nil
+	return ms.ents[i-offset].Term, nil
 }
 
 // LastIndex implements the Storage interface.
@@ -139,7 +119,7 @@ func (ms *MemoryStorage) LastIndex() (uint64, error) {
 
 // *ms.ents[0].Index is the log entry first pos in the global log entry
 func (ms *MemoryStorage) lastIndex() uint64 {
-	return *ms.ents[0].Index + uint64(len(ms.ents)) - 1
+	return ms.ents[0].Index + uint64(len(ms.ents)) - 1
 }
 
 // FirstIndex implements the Storage interface.
@@ -150,7 +130,7 @@ func (ms *MemoryStorage) FirstIndex() (uint64, error) {
 }
 
 func (ms *MemoryStorage) firstIndex() uint64 {
-	return *ms.ents[0].Index + 1
+	return ms.ents[0].Index + 1
 }
 
 // Snapshot implements the Storage interface.
@@ -210,14 +190,14 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 	ms.Lock()
 	defer ms.Unlock()
 	offset := ms.ents[0].Index
-	if compactIndex <= *offset {
+	if compactIndex <= offset {
 		return ErrCompacted
 	}
 	if compactIndex > ms.lastIndex() {
 		log.Println("compact %d is out of bound lastindex(%d)", compactIndex, ms.lastIndex())
 	}
 
-	i := compactIndex - *offset
+	i := compactIndex - offset
 	ents := make([]pb.Entry, 1, 1+uint64(len(ms.ents))-i)
 	ents[0].Index = ms.ents[i].Index
 	ents[0].Term = ms.ents[i].Term
@@ -237,18 +217,18 @@ func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 	defer ms.Unlock()
 
 	first := ms.firstIndex()
-	last := *entries[0].Index + uint64(len(entries)) - 1
+	last := entries[0].Index + uint64(len(entries)) - 1
 
 	// shortcut if there is no new entry.
 	if last < first {
 		return nil
 	}
 	// truncate compacted entries
-	if first > *entries[0].Index {
-		entries = entries[first-*entries[0].Index:]
+	if first > entries[0].Index {
+		entries = entries[first-entries[0].Index:]
 	}
 
-	offset := *entries[0].Index - *ms.ents[0].Index
+	offset := entries[0].Index - ms.ents[0].Index
 	switch {
 	case uint64(len(ms.ents)) > offset:
 		ms.ents = append([]pb.Entry{}, ms.ents[:offset]...)
@@ -259,63 +239,5 @@ func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 		log.Println("missing log entry [last: %d, append at: %d]",
 			ms.lastIndex(), entries[0].Index)
 	}
-	return nil
-}
-
-// AppendWAL the new entries to the WAL buffer.
-func (ms *MemoryStorage) AppendWAL(entries []pb.Entry) error {
-	if len(entries) == 0 {
-		return nil
-	}
-
-	ms.Lock()
-	defer ms.Unlock()
-
-	// 将新条目追加到缓冲区
-	ms.walBuffer = append(ms.walBuffer, entries...)
-	// 通知写盘线程检查缓冲区,just give a empty struct
-	ms.commitChan <- struct{}{}
-	return nil
-}
-
-// syncEntry asynchronously flushes the WAL buffer to persistent storage.
-func (ms *MemoryStorage) syncEntry() {
-	// 启动异步写盘 goroutine
-	go func() {
-		for {
-			select {
-			// get info from channel
-			case <-ms.commitChan:
-				// 触发写盘
-				ms.flushWAL()
-			}
-		}
-	}()
-}
-
-// flushWAL flushes the WAL buffer to persistent storage.
-func (ms *MemoryStorage) flushWAL() {
-	ms.Lock()
-	if len(ms.walBuffer) == 0 {
-		ms.Unlock()
-		return // 缓冲区为空，无需写盘
-	}
-
-	// 将缓冲区中的条目写入持久化存储（例如，写入文件或数据库）
-	// 这里假设你有一个持久化方法，例如 writeToDisk
-	if err := ms.writeToDisk(ms.walBuffer); err != nil {
-		log.Printf("failed to flush WAL: %v", err)
-	}
-	// 清空缓冲区
-	ms.walBuffer = []pb.Entry{}
-	ms.Unlock()
-}
-
-// writeToDisk simulates writing entries to persistent storage.
-// 在实际实现中，你需要根据你的存储层（如文件系统或数据库）实现 this method.
-func (ms *MemoryStorage) writeToDisk(entries []pb.Entry) error {
-	// todo 模拟写盘操作
-
-	log.Printf("flushing %d entries to disk", len(entries))
 	return nil
 }

@@ -18,6 +18,20 @@ import (
 const None uint64 = 0
 const noLimit = math.MaxUint64
 
+type ReadOnlyOption int
+
+const (
+	// ReadOnlySafe guarantees the linearizability of the read only request by
+	// communicating with the quorum. It is the default and suggested option.
+	ReadOnlySafe ReadOnlyOption = iota
+	// ReadOnlyLeaseBased ensures linearizability of the read only request by
+	// relying on the leader lease. It can be affected by clock drift.
+	// If the clock drift is unbounded, leader might keep the lease longer than it
+	// should (clock can move backward/pause without any bound). ReadIndex is not safe
+	// in that case.
+	ReadOnlyLeaseBased
+)
+
 type StateType uint64
 
 const (
@@ -40,8 +54,6 @@ type stepFunc func(r *raft, msg *pb.Message) error
 // raft consensus algorithm: build a simple distributed database in order to adapt the env of k8s
 type RaftConfig struct {
 	ID uint64
-	// ComDBStorage a storage struct to manage the status and log entries status
-	ComDBStorage ComDBStorage
 	// ElectionTick is the number of Node.Tick invocations that must pass between
 	// elections. That is, if a follower does not receive any message from the
 	// leader of current term before ElectionTick has elapsed, it will become
@@ -98,7 +110,9 @@ type raft struct {
 	// lead current leader
 	lead uint64
 	// raft log information
-	raftLog *raftLog
+	raftLog  *raftLog
+	readOnly *readOnly
+	ms       *MemoryStorage
 	// the state of current node
 	state StateType
 	// the message info: compile by protobuf
@@ -122,6 +136,7 @@ type raft struct {
 	tick           func()
 	step           stepFunc
 	processTracker tracker.ProgressTracker
+	status         BaseStatus
 }
 
 func newRaft(config *RaftConfig) *raft {
@@ -129,18 +144,22 @@ func newRaft(config *RaftConfig) *raft {
 		panic(err.Error())
 	}
 	// raft log initialization
-
 	raftlog := newLogWithSize(config.Storage, config.MaxCommittedSizePerReady)
 	// state initializetion
 	//hs, cs, err := config.Storage.InitialState()
 	//if err != nil {
 	//	panic(err)
 	//}
-
+	ms, err := NewMemoryStorage()
+	if err != nil {
+		return nil
+	}
 	r := &raft{
 		id:                 config.ID,
 		lead:               None,
 		raftLog:            raftlog,
+		ms:                 ms,
+		readOnly:           newReadOnly(ReadOnlySafe),
 		maxMsgSize:         config.MaxSizePerMsg,
 		maxUncommittedSize: config.MaxUncommittedEntriesSize,
 		//prs:                       tracker.MakeProgressTracker(c.MaxInflightMsgs),
@@ -206,7 +225,7 @@ func (r *raft) tickElection() {
 	if r.pastElectionTimeout() {
 		r.electionElapsed = 0
 		var msgType pb.MessageType = pb.MessageType_MsgHup
-		if err := r.Step(&pb.Message{From: &r.id, Type: &msgType}); err != nil {
+		if err := r.Step(&pb.Message{From: r.id, Type: msgType}); err != nil {
 			log.Println("error occurred during election: %v", err)
 		}
 	}
@@ -219,12 +238,6 @@ func (r *raft) tickHeartbeat() {
 	// ==================election====================
 	if r.electionElapsed >= uint64(r.electionTimeout) {
 		r.electionElapsed = 0
-		if r.checkQuorum {
-			var msgType pb.MessageType = pb.MessageType_MsgCheckQuorum
-			if err := r.Step(&pb.Message{From: &r.id, Type: &msgType}); err != nil {
-				log.Println("error occurred during checking sending heartbeat: %v", err)
-			}
-		}
 	}
 	//
 	if r.state != StateLeader {
@@ -234,7 +247,7 @@ func (r *raft) tickHeartbeat() {
 	if r.heartbeatElapsed >= r.heartbeatTimeout {
 		r.heartbeatElapsed = 0
 		var msgType pb.MessageType = pb.MessageType_MsgBeat
-		if err := r.Step(&pb.Message{From: &r.id, Type: &msgType}); err != nil {
+		if err := r.Step(&pb.Message{From: r.id, Type: msgType}); err != nil {
 			log.Printf("error occurred during checking sending heartbeat: %v\n", err)
 		}
 	}
@@ -288,10 +301,54 @@ func (r *raft) becomeLeader() {
 // todo different disposal of status
 // stepLeader send message to leader
 func stepLeader(r *raft, msg *pb.Message) error {
+	switch msg.Type {
+	case pb.MessageType_MsgBeat:
+		r.bcastHeartbeat()
+		return nil
 
+	}
 	return nil
 }
 
+// bcastHeartbeat sends RPC, without entries to all the peers.
+func (r *raft) bcastHeartbeat() {
+	lastCtx := r.readOnly.lastPendingRequestCtx()
+	if len(lastCtx) == 0 {
+		r.bcastHeartbeatWithCtx(nil)
+	} else {
+		r.bcastHeartbeatWithCtx([]byte(lastCtx))
+	}
+}
+func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
+	r.processTracker.Visit(func(id uint64, _ *tracker.Progress) {
+		if id == r.id {
+			return
+		}
+		r.sendHeartbeat(id, ctx)
+	})
+}
+
+// sendHeartbeat sends a heartbeat RPC to the given peer.
+func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
+	// Attach the commit as min(to.matched, r.committed).
+	// When the leader sends out heartbeat message,
+	// the receiver(follower) might not be matched with the leader
+	// or it might not have all the committed entries.
+	// The leader MUST NOT forward the follower's commit to
+	// an unmatched index.
+	commit := min(r.processTracker.Progress[to].Match, r.raftLog.committed)
+	var msgType pb.MessageType = pb.MessageType_MsgHeartbeat
+	m := &pb.Message{
+		To:      to,
+		Type:    msgType,
+		Commit:  commit,
+		Context: ctx,
+	}
+
+	r.send(m)
+}
+
+// todo finish step
 // stepCandidate send message to candidate
 func stepCandidate(r *raft, msg *pb.Message) error { return nil }
 
@@ -302,20 +359,20 @@ func stepFollower(r *raft, msg *pb.Message) error { return nil }
 func (r *raft) Step(msg *pb.Message) error {
 	// Check if the message has a higher term than the current Raft node's term
 	// 如果消息的任期大于当前 Raft 节点的任期
-	if *msg.Term > r.Term {
+	if msg.Term > r.Term {
 		// 根据消息类型处理不同情况
-		switch *msg.Type {
+		switch msg.Type {
 		// 如果是投票请求消息，将当前节点转变为跟随者，领导者 ID 设置为 None
 		case pb.MessageType_MsgVote:
-			r.becomeFollower(*msg.Term, None)
+			r.becomeFollower(msg.Term, None)
 		// 对于其他消息类型，将当前节点转变为跟随者，并更新领导者 ID 为消息发送者 ID
 		default:
-			r.becomeFollower(*msg.Term, *msg.From)
+			r.becomeFollower(msg.Term, msg.From)
 		}
 	}
 
 	// 根据消息类型处理不同消息
-	switch *msg.Type {
+	switch msg.Type {
 	// MsgHup：触发选举流程
 	case pb.MessageType_MsgHup:
 		r.startElection(msg)
@@ -348,7 +405,6 @@ func (r *raft) startElection(msg *pb.Message) {
 	// send vote request
 	r.sendVoteRequests()
 	// judge if the candidate can be the leader
-
 }
 
 // handleVoteRequest处理投票请求消息，决定是否授予投票。
@@ -358,7 +414,7 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 		return
 	}
 	// two factor: 1. the node receive the msg that it has voted. 2. do not vote yet
-	canVote := r.Vote == *msg.From ||
+	canVote := r.Vote == msg.From ||
 		(r.Vote == None && r.lead == None)
 	//if canVote && r.raftLog.isUpToDate(m.Index, m.LogTerm) { // judge if the candidate have the qualification to ask for vote
 	//
@@ -370,14 +426,14 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 		log.Println("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d",
 			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
 
-		r.send(&pb.Message{To: msg.From, Term: msg.Term, Type: &msgType})
+		r.send(&pb.Message{To: msg.From, Term: msg.Term, Type: msgType})
 		r.electionElapsed = 0
-		r.Vote = *msg.From
+		r.Vote = msg.From
 	} else {
 		log.Println("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
 			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
 		var reject = true
-		r.send(&pb.Message{To: msg.From, Term: &r.Term, Type: &msgType, Reject: &reject})
+		r.send(&pb.Message{To: msg.From, Term: r.Term, Type: msgType, Reject: reject})
 	}
 
 }
@@ -385,7 +441,7 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 // handleVoteResponse 处理投票响应消息，更新投票状态并检查是否当选。execute by leader
 func (r *raft) handleVoteResponse(msg *pb.Message) {
 	// update the value
-	r.votes[*msg.From] = true
+	r.votes[msg.From] = true
 
 	if r.poll(r.id, true) == true {
 		r.becomeLeader()
@@ -396,15 +452,15 @@ func (r *raft) handleVoteResponse(msg *pb.Message) {
 // send put the msg into the msg pending area.send msg then node is ready
 // 在Raft 的主循环中，节点会定期调用 Ready 方法来检查是否有需要处理的工作。
 func (r *raft) send(msg *pb.Message) {
-	if *msg.From == None {
-		*msg.From = r.id
+	if msg.From == None {
+		msg.From = r.id
 	}
-	if *msg.Type == pb.MessageType_MsgVote || *msg.Type == pb.MessageType_MsgVoteResp {
-		if *msg.Term == 0 {
+	if msg.Type == pb.MessageType_MsgVote || msg.Type == pb.MessageType_MsgVoteResp {
+		if msg.Term == 0 {
 			panic(fmt.Sprintf("term should be set when sending %s", msg.Type))
 		}
 	} else {
-		if *msg.Term != 0 {
+		if msg.Term != 0 {
 			panic(fmt.Sprintf("term should not be set when sending %s (was %d)", msg.Type, msg.Term))
 		}
 	}
@@ -460,15 +516,54 @@ func (r *raft) sendVoteRequest(id uint64) {
 	var msgType pb.MessageType = pb.MessageType_MsgVote
 	var lastIndex uint64 = r.raftLog.lastIndex()
 	msg := &pb.Message{
-		Type:  &msgType,   // *MessageType
-		Term:  &r.Term,    // *uint64
-		To:    &id,        // *uint64
-		From:  &r.id,      // *uint64
-		Index: &lastIndex, // *uint64
+		Type:  msgType,   // *MessageType
+		Term:  r.Term,    // *uint64
+		To:    id,        // *uint64
+		From:  r.id,      // *uint64
+		Index: lastIndex, // *uint64
 
 	}
 	r.send(msg)
 }
+
+//
+//func (r *raft) advance(rd Ready) {
+//	r.reduceUncommittedSize(rd.CommittedEntries)
+//	// If entries were applied (or a snapshot), update our cursor for
+//	// the next Ready. Note that if the current HardState contains a
+//	// new Commit index, this does not mean that we're also applying
+//	// all of the new entries due to commit pagination by size.
+//	if newApplied := rd.appliedCursor(); newApplied > 0 {
+//		oldApplied := r.raftLog.applied
+//		r.raftLog.appliedTo(newApplied)
+//
+//		if r.prs.Config.AutoLeave && oldApplied <= r.pendingConfIndex && newApplied >= r.pendingConfIndex && r.state == StateLeader {
+//			// If the current (and most recent, at least for this leader's term)
+//			// configuration should be auto-left, initiate that now. We use a
+//			// nil Data which unmarshals into an empty ConfChangeV2 and has the
+//			// benefit that appendEntry can never refuse it based on its size
+//			// (which registers as zero).
+//			ent := pb.Entry{
+//				Type: pb.EntryConfChangeV2,
+//				Data: nil,
+//			}
+//			// There's no way in which this proposal should be able to be rejected.
+//			if !r.appendEntry(ent) {
+//				panic("refused un-refusable auto-leaving ConfChangeV2")
+//			}
+//			r.pendingConfIndex = r.raftLog.lastIndex()
+//			r.logger.Infof("initiating automatic transition out of joint configuration %s", r.prs.Config)
+//		}
+//	}
+//
+//	if len(rd.Entries) > 0 {
+//		e := rd.Entries[len(rd.Entries)-1]
+//		r.raftLog.stableTo(e.Index, e.Term)
+//	}
+//	if !IsEmptySnap(rd.Snapshot) {
+//		r.raftLog.stableSnapTo(rd.Snapshot.Metadata.Index)
+//	}
+//}
 
 func (r *raft) resetRandomizedElectionTimeout() {
 	r.randomizedElectionTimeout = r.electionTimeout + globalRand.Intn(r.electionTimeout)
@@ -484,7 +579,10 @@ func (r *lockedRand) Intn(n int) int {
 func (r *raft) pastElectionTimeout() bool {
 	return r.electionElapsed >= uint64(r.randomizedElectionTimeout)
 }
-
+func (r *raft) advance(rd Ready) {
+	// 处理已提交的日志条目
+	r.reduceUncommittedSize(rd.CommittedEntries)
+}
 func (l *raftLog) lastTerm() uint64 {
 	t, err := l.term(l.lastIndex())
 	if err != nil {
@@ -508,4 +606,34 @@ func (l *raftLog) term(i uint64) (uint64, error) {
 		return 0, err
 	}
 	panic(err)
+}
+func (r *raft) softState() *SoftState { return &SoftState{Lead: r.lead, RaftState: r.state} }
+
+func (r *raft) hardState() *HardState {
+	return &HardState{
+		Term:   r.Term,
+		Vote:   r.Vote,
+		Commit: r.raftLog.committed,
+	}
+}
+
+// the uncommitted entry size limit.
+func (r *raft) reduceUncommittedSize(ents []pb.Entry) {
+	if r.uncommittedSize == 0 {
+		// Fast-path for followers, who do not track or enforce the limit.
+		return
+	}
+
+	var s uint64
+	for _, e := range ents {
+		s += uint64(PayloadSize(e))
+	}
+	if s > r.uncommittedSize {
+		// uncommittedSize may underestimate the size of the uncommitted Raft
+		// log tail but will never overestimate it. Saturate at 0 instead of
+		// allowing overflow.
+		r.uncommittedSize = 0
+	} else {
+		r.uncommittedSize -= s
+	}
 }
