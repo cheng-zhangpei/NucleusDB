@@ -7,40 +7,28 @@ import (
 
 // Progress 代表单个节点的日志复制进度和状态。
 type Progress struct {
-	Match        uint64 // 已知匹配的最高日志索引
-	Next         uint64 // 下一个将发送给该跟随者（或学习者）的日志条目索引
-	RecentActive bool   // 表示该节点最近是否活跃
-	ProbeSent    bool   // 表示是否已发送探测消息
-
-	State         StateType // 节点当前状态
-	ElectionReset bool      // 标记选举超时计时器是否已被重置
+	Match            uint64 // 已知匹配的最高日志索引
+	Next             uint64 // 下一个将发送给该跟随者（或学习者）的日志条目索引
+	RecentActive     bool   // 表示该节点最近是否活跃
+	ProbeSent        bool   // 表示是否已发送探测消息
+	UncertainMessage *Inflights
+	State            StateType // 节点当前状态
+	ElectionReset    bool      // 标记选举超时计时器是否已被重置
 }
 
-// StateType 表示节点的 Raft 状态。
-type StateType uint64
+// BecomeProbe transitions into StateProbe. Next is reset to Match+1 or,
+// optionally and if larger, the index of the pending snapshot.
+func (pr *Progress) BecomeProbe() {
+	// If the original state is StateSnapshot, progress knows that
+	pr.ResetState(StateProbe)
+	pr.Next = pr.Match + 1
 
-const (
-	StateFollower  StateType = iota // 跟随者状态
-	StateCandidate                  // 候选人状态
-	StateLeader                     // 领导者状态
-)
-
-// BecomeFollower 将节点状态切换为 Follower（跟随者）。
-func (pr *Progress) BecomeFollower() {
-	pr.State = StateFollower
-	pr.ResetState()
 }
 
-// BecomeCandidate 将节点状态切换为 Candidate（候选人）。
-func (pr *Progress) BecomeCandidate() {
-	pr.State = StateCandidate
-	pr.ResetState()
-}
-
-// BecomeLeader 将节点状态切换为 Leader（领导者）。
-func (pr *Progress) BecomeLeader() {
-	pr.State = StateLeader
-	pr.ResetState()
+// BecomeReplicate transitions into StateReplicate, resetting Next to Match+1.
+func (pr *Progress) BecomeReplicate() {
+	pr.ResetState(StateReplicate)
+	pr.Next = pr.Match + 1
 }
 
 // SendHeartbeat Leader 向所有跟随者发送心跳消息（AppendEntries 请求）。
@@ -107,32 +95,18 @@ func (pr *Progress) OptimisticUpdate(n uint64) {
 	pr.Next = n + 1
 }
 
-// IsPaused 检查当前节点是否处于暂停状态。
-func (pr *Progress) IsPaused() bool {
-	switch pr.State {
-	case StateFollower:
-		return false
-	case StateCandidate:
-		return false
-	case StateLeader:
-		return false
-	default:
-		return true
-	}
-}
-
 // String 提供 Progress 的字符串表示。
 func (pr *Progress) String() string {
 	return fmt.Sprintf("State=%d Match=%d Next=%d Active=%v", pr.State, pr.Match, pr.Next, pr.RecentActive)
 }
 
 // ResetState 重置 Progress 的状态和相关字段。
-func (pr *Progress) ResetState() {
-	pr.Next = pr.Match + 1
-	pr.RecentActive = false
+func (pr *Progress) ResetState(state StateType) {
 	pr.ProbeSent = false
-}
+	pr.State = state
+	pr.UncertainMessage.reset()
 
+}
 func max(a, b uint64) uint64 {
 	if a > b {
 		return a
@@ -145,4 +119,16 @@ func min(a, b uint64) uint64 {
 		return a
 	}
 	return b
+}
+func (pr *Progress) IsPaused() bool {
+	switch pr.State {
+	case StateProbe:
+		return pr.ProbeSent
+	case StateReplicate:
+		return pr.UncertainMessage.Full()
+	case StateSnapshot:
+		return true
+	default:
+		panic("unexpected state")
+	}
 }

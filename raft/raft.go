@@ -18,6 +18,8 @@ import (
 const None uint64 = 0
 const noLimit = math.MaxUint64
 
+var ErrProposalDropped = errors.New("raft proposal dropped")
+
 type ReadOnlyOption int
 
 const (
@@ -215,6 +217,7 @@ func (r *raft) reset(term uint64) {
 
 // appendEntry todo: after the storage module finished
 func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
+
 	return true
 }
 
@@ -305,7 +308,86 @@ func stepLeader(r *raft, msg *pb.Message) error {
 	case pb.MessageType_MsgBeat:
 		r.bcastHeartbeat()
 		return nil
+	case pb.MessageType_MsgProp:
+		// 处理 MsgProp 类型的消: 确保提案的正确性和合法性，并将日志条目追加到 Raft 日志中
+		pr := r.processTracker.Progress[msg.To]
 
+		if len(msg.Entries) == 0 {
+			log.Fatalln("%x stepped empty MsgProp", r.id)
+		}
+
+		if r.processTracker.Progress[r.id] == nil {
+			return ErrProposalDropped
+		}
+		if !r.appendEntry(convertToPBEntries(msg.Entries)...) {
+			return ErrProposalDropped
+		}
+		// broadcast append msg
+		r.bcastAppend()
+
+		// todo read only messages
+
+		switch msg.Type {
+		case pb.MessageType_MsgAppResp:
+			pr.RecentActive = true
+			// todo understand
+			if msg.Reject {
+				log.Println("%x received MsgAppResp(rejected, hint: (index %d, term %d)) from %x for index %d",
+					r.id, msg.RejectHint, msg.LogTerm, msg.From, msg.Index)
+				nextProbeIdx := msg.RejectHint
+				if msg.Term > 0 {
+					nextProbeIdx = r.raftLog.findConflictByTerm(msg.RejectHint, msg.LogTerm)
+				}
+				if pr.MaybeDecrTo(msg.Index, nextProbeIdx) {
+					log.Println("%x decreased progress of %x to [%s]", r.id, msg.From, pr)
+					if pr.State == tracker.StateReplicate {
+						pr.BecomeProbe()
+					}
+					r.sendAppend(msg.From)
+				}
+			} else {
+				if pr.MaybeUpdate(msg.Index) {
+					switch {
+					case pr.State == tracker.StateProbe:
+						pr.BecomeReplicate()
+						// We've updated flow control information above, which may
+						// allow us to send multiple (size-limited) in-flight messages
+						// at once (such as when transitioning from probe to
+						// replicate, or when freeTo() covers multiple messages). If
+						// we have more entries to send, send as many messages as we
+						// can (without sending empty messages for the commit index)
+						for r.maybeSendAppend(msg.From, false) {
+						}
+					}
+				}
+			}
+			//case pb.MessageType_MsgHeartbeatResp:
+			//	pr.RecentActive = true
+			//	pr.ProbeSent = false
+			//
+			//	// free one slot for the full inflights window to allow progress.
+			//	if pr.State == tracker.StateReplicate && pr.UncertainMessage.Full() {
+			//		pr.UncertainMessage.FreeFirstOne()
+			//	}
+			//	if pr.Match < r.raftLog.lastIndex() {
+			//		r.sendAppend(msg.From)
+			//	}
+			//
+			//	if r.readOnly.option != ReadOnlySafe || len(msg.Context) == 0 {
+			//		return nil
+			//	}
+			//
+			//	//if r.prs.Voters.VoteResult(r.readOnly.recvAck(msg.From, msg.Context)) != quorum.VoteWon {
+			//	//	return nil
+			//	//}
+			//
+			//	rss := r.readOnly.advance(msg)
+			//	for _, rs := range rss {
+			//		if resp := r.responseToReadIndexReq(rs.req, rs.index); resp.To != None {
+			//			r.send(resp)
+			//		}
+			//	}
+		}
 	}
 	return nil
 }
@@ -344,7 +426,6 @@ func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 		Commit:  commit,
 		Context: ctx,
 	}
-
 	r.send(m)
 }
 
@@ -526,6 +607,63 @@ func (r *raft) sendVoteRequest(id uint64) {
 	r.send(msg)
 }
 
+// bcastAppend sends RPC, with entries to all peers that are not up-to-date
+// according to the progress recorded in r.prs.
+func (r *raft) bcastAppend() {
+	r.processTracker.Visit(func(id uint64, _ *tracker.Progress) {
+		if id == r.id {
+			return
+		}
+		r.sendAppend(id)
+	})
+}
+
+// sendAppend sends an append RPC with new entries (if any) and the
+// current commit index to the given peer.
+func (r *raft) sendAppend(to uint64) {
+	r.maybeSendAppend(to, true)
+}
+
+func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
+	pr := r.processTracker.Progress[to]
+	if pr.IsPaused() {
+		return false
+	}
+	m := pb.Message{}
+	m.To = to
+
+	term, _ := r.raftLog.term(pr.Next - 1)
+	ents := r.ms.ents[pr.Next:]
+	if len(ents) == 0 && !sendIfEmpty {
+		return false
+	}
+	var entries []*pb.Entry
+	for _, entry := range ents {
+		entries = append(entries, &entry)
+	}
+	m.Type = pb.MessageType_MsgApp
+	m.Index = pr.Next - 1
+	m.Term = term
+	m.Entries = entries
+	m.Commit = r.raftLog.committed
+	if n := len(m.Entries); n != 0 {
+		switch pr.State {
+		// optimistically increase the next when in StateReplicate
+		case tracker.StateReplicate:
+			last := m.Entries[n-1].Index
+			pr.OptimisticUpdate(last)
+			pr.UncertainMessage.Add(last)
+		case tracker.StateProbe:
+			pr.ProbeSent = true
+		default:
+			log.Fatalln("%x is sending append in unhandled state %s", r.id, pr.State)
+		}
+	}
+	r.send(&m)
+
+	return true
+}
+
 //
 //func (r *raft) advance(rd Ready) {
 //	r.reduceUncommittedSize(rd.CommittedEntries)
@@ -583,14 +721,6 @@ func (r *raft) advance(rd Ready) {
 	// 处理已提交的日志条目
 	r.reduceUncommittedSize(rd.CommittedEntries)
 }
-func (l *raftLog) lastTerm() uint64 {
-	t, err := l.term(l.lastIndex())
-	if err != nil {
-		log.Fatalln("unexpected error when getting the last term (%v)", err)
-	}
-	return t
-}
-
 func (l *raftLog) term(i uint64) (uint64, error) {
 	// the valid term range is [index of dummy entry, last index]
 	dummyIndex := l.firstIndex() - 1
@@ -636,4 +766,11 @@ func (r *raft) reduceUncommittedSize(ents []pb.Entry) {
 	} else {
 		r.uncommittedSize -= s
 	}
+}
+func convertToPBEntries(entries []*pb.Entry) []pb.Entry {
+	pbEntries := make([]pb.Entry, len(entries))
+	for i, entry := range entries {
+		pbEntries[i] = *entry // 假设 Entry 和 pb.Entry 是兼容的
+	}
+	return pbEntries
 }

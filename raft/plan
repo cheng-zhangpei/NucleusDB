@@ -17,3 +17,6 @@ the implementation of raft in ComDB
 +====================================================================================
 
 如果参考etcd的代码实现raft过于复杂，没法完全理解，所以需要自己从头思考一下raft到底需要什么，先不去思考一些分布式状态很复杂的情况，从外到内进行思考
+
+2025.2.11-12
+finish raftnode and stepLeader.... 3 step functions

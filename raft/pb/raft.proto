@@ -54,9 +54,11 @@ message Message {
   uint64 index = 6;
   repeated Entry entries = 7;
   uint64 commit = 8;
-  Snapshot snapshot = 9;
-  bool reject = 10;
+  uint64 rejectHint = 9;
+  Snapshot snapshot = 10;
+  bool reject = 11;
   bytes context = 12;
+  uint64 logTerm = 13;
 }
 
 // Raft RPC service
