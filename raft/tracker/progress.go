@@ -71,8 +71,9 @@ func (pr *Progress) ApplyLogEntries() {
 	// 实现日志条目应用逻辑
 }
 
-// MaybeUpdate 处理跟随者的确认响应，更新日志条目索引。
+// MaybeUpdate 处理跟随者的确认响应，更新日志条目索引。说人话就是记录现在的follower匹配到啥位置了
 func (pr *Progress) MaybeUpdate(n uint64) bool {
+
 	if pr.Match < n {
 		pr.Match = n
 		pr.Next = n + 1

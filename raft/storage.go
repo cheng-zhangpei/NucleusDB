@@ -3,6 +3,7 @@ package raft
 import (
 	"ComDB/raft/pb"
 	"errors"
+	_ "golang.org/x/exp/slog"
 	"log"
 	"sync"
 )
@@ -29,7 +30,7 @@ type Storage interface {
 	// Entries returns a slice of log entries in the range [lo,hi).
 	// MaxSize limits the total size of the log entries returned, but
 	// Entries returns at least one entry if any.
-	Entries(lo, hi, maxSize uint64) ([]pb.Entry, error)
+	Entries(lo, hi, maxSize uint64) ([]*pb.Entry, error)
 	// Term returns the term of entry i, which must be in the range
 	// [FirstIndex()-1, LastIndex()]. The term of the entry before
 	// FirstIndex is retained for matching purposes even though the
@@ -51,14 +52,14 @@ type MemoryStorage struct {
 	sync.Mutex
 	// only neec to save hardState
 	hardState HardState
-	ents      []pb.Entry
+	ents      []*pb.Entry
 }
 
 // NewMemoryStorage creates an empty MemoryStorage.
 func NewMemoryStorage() (*MemoryStorage, error) {
 	return &MemoryStorage{
 		// When starting from scratch populate the list with a dummy entry at term zero.
-		ents: make([]pb.Entry, 1),
+		ents: make([]*pb.Entry, 1),
 	}, nil
 }
 
@@ -76,7 +77,7 @@ func (ms *MemoryStorage) SetHardState(st HardState) error {
 }
 
 // Entries implements the Storage interface.
-func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
+func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
 	ms.Lock()
 	defer ms.Unlock()
 	// remeber ents is a cache area,Index is the global pos of the Entry including the entries saved in the DB
@@ -198,7 +199,7 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 	}
 
 	i := compactIndex - offset
-	ents := make([]pb.Entry, 1, 1+uint64(len(ms.ents))-i)
+	ents := make([]*pb.Entry, 1, 1+uint64(len(ms.ents))-i)
 	ents[0].Index = ms.ents[i].Index
 	ents[0].Term = ms.ents[i].Term
 	ents = append(ents, ms.ents[i+1:]...)
@@ -208,7 +209,7 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 
 // Append the new entries to storage.
 // entries[0].Index > ms.entries[0].Index -> entries is a series of log Entry that want to save into tha WAL
-func (ms *MemoryStorage) Append(entries []pb.Entry) error {
+func (ms *MemoryStorage) Append(entries []*pb.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -231,7 +232,7 @@ func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 	offset := entries[0].Index - ms.ents[0].Index
 	switch {
 	case uint64(len(ms.ents)) > offset:
-		ms.ents = append([]pb.Entry{}, ms.ents[:offset]...)
+		ms.ents = append([]*pb.Entry{}, ms.ents[:offset]...)
 		ms.ents = append(ms.ents, entries...)
 	case uint64(len(ms.ents)) == offset:
 		ms.ents = append(ms.ents, entries...)

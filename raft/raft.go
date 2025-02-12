@@ -301,7 +301,6 @@ func (r *raft) becomeLeader() {
 }
 
 // ===========================================================state change==========================================
-// todo different disposal of status
 // stepLeader send message to leader
 func stepLeader(r *raft, msg *pb.Message) error {
 	switch msg.Type {
@@ -325,12 +324,9 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		// broadcast append msg
 		r.bcastAppend()
 
-		// todo read only messages
-
 		switch msg.Type {
 		case pb.MessageType_MsgAppResp:
 			pr.RecentActive = true
-			// todo understand
 			if msg.Reject {
 				log.Println("%x received MsgAppResp(rejected, hint: (index %d, term %d)) from %x for index %d",
 					r.id, msg.RejectHint, msg.LogTerm, msg.From, msg.Index)
@@ -338,11 +334,13 @@ func stepLeader(r *raft, msg *pb.Message) error {
 				if msg.Term > 0 {
 					nextProbeIdx = r.raftLog.findConflictByTerm(msg.RejectHint, msg.LogTerm)
 				}
+				// update the Next field in progressTrack
 				if pr.MaybeDecrTo(msg.Index, nextProbeIdx) {
 					log.Println("%x decreased progress of %x to [%s]", r.id, msg.From, pr)
 					if pr.State == tracker.StateReplicate {
 						pr.BecomeProbe()
 					}
+					// change to the check model
 					r.sendAppend(msg.From)
 				}
 			} else {
@@ -357,36 +355,24 @@ func stepLeader(r *raft, msg *pb.Message) error {
 						// we have more entries to send, send as many messages as we
 						// can (without sending empty messages for the commit index)
 						for r.maybeSendAppend(msg.From, false) {
+
 						}
 					}
 				}
 			}
-			//case pb.MessageType_MsgHeartbeatResp:
-			//	pr.RecentActive = true
-			//	pr.ProbeSent = false
-			//
-			//	// free one slot for the full inflights window to allow progress.
-			//	if pr.State == tracker.StateReplicate && pr.UncertainMessage.Full() {
-			//		pr.UncertainMessage.FreeFirstOne()
-			//	}
-			//	if pr.Match < r.raftLog.lastIndex() {
-			//		r.sendAppend(msg.From)
-			//	}
-			//
-			//	if r.readOnly.option != ReadOnlySafe || len(msg.Context) == 0 {
-			//		return nil
-			//	}
-			//
-			//	//if r.prs.Voters.VoteResult(r.readOnly.recvAck(msg.From, msg.Context)) != quorum.VoteWon {
-			//	//	return nil
-			//	//}
-			//
-			//	rss := r.readOnly.advance(msg)
-			//	for _, rs := range rss {
-			//		if resp := r.responseToReadIndexReq(rs.req, rs.index); resp.To != None {
-			//			r.send(resp)
-			//		}
-			//	}
+		case pb.MessageType_MsgHeartbeatResp:
+			pr.RecentActive = true
+			// 在心跳中 不处于冲突检测阶段
+			pr.ProbeSent = false
+			// free one slot for the full inflights window to allow progress.
+			if pr.State == tracker.StateReplicate && pr.UncertainMessage.Full() {
+				// 现在环形缓冲区已经满了
+				pr.UncertainMessage.FreeFirstOne()
+			}
+			// 对方匹配的数据比现在的最后的一条日志数据还要少，所以在心跳的时候继续将缓冲区的数据发出去
+			if pr.Match < r.raftLog.lastIndex() {
+				r.sendAppend(msg.From)
+			}
 		}
 	}
 	return nil
@@ -429,12 +415,83 @@ func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 	r.send(m)
 }
 
-// todo finish step
 // stepCandidate send message to candidate
-func stepCandidate(r *raft, msg *pb.Message) error { return nil }
+func stepCandidate(r *raft, msg *pb.Message) error {
+	switch msg.Type {
+	case pb.MessageType_MsgProp:
+		log.Fatalln("%x no leader at term %d; dropping proposal", r.id, r.Term)
+		return ErrProposalDropped
+	case pb.MessageType_MsgApp:
+		r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
+		r.handleAppendEntries(msg)
+	case pb.MessageType_MsgHeartbeat:
+		r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
+		r.handleHeartbeat(msg)
+	case pb.MessageType_MsgAppResp:
+		r.becomeFollower(r.Term, None)
+		return nil
+	case pb.MessageType_MsgVoteResp:
+		r.handleVoteResponse(msg)
+		return nil
+	}
+	return nil
+}
 
 // stepFollower send message to follower
-func stepFollower(r *raft, msg *pb.Message) error { return nil }
+func stepFollower(r *raft, msg *pb.Message) error {
+	switch msg.Type {
+	case pb.MessageType_MsgProp:
+		if r.lead == None {
+			log.Println("%x no leader at term %d; dropping proposal", r.id, r.Term)
+			return ErrProposalDropped
+		}
+		msg.To = r.lead
+		r.send(msg)
+	case pb.MessageType_MsgApp:
+		r.electionElapsed = 0
+		r.lead = msg.From
+		r.handleAppendEntries(msg)
+	case pb.MessageType_MsgHeartbeat:
+		r.electionElapsed = 0
+		r.lead = msg.From
+		r.handleHeartbeat(msg)
+	}
+	return nil
+}
+
+// ==================接受到下面两种信息需要如何修改自身状态===================
+func (r *raft) handleAppendEntries(msg *pb.Message) {
+	if msg.Index < r.raftLog.committed {
+		// follower committed的数据新
+		r.send(&pb.Message{To: msg.From, Type: pb.MessageType_MsgAppResp, Index: r.raftLog.committed})
+		return
+	}
+	// 这些数据可以放入ms的缓冲区中
+	if _, ok := r.raftLog.AppendWithConflictCheck(msg); ok {
+		r.send(&pb.Message{To: msg.From, Type: pb.MessageType_MsgAppResp, Index: r.ms.lastIndex()})
+	} else {
+		// 到这个位置说明第一个位置都没法匹配咯,要立刻开启探针模式
+		hintIndex := min(msg.Index, r.raftLog.lastIndex())
+		hintIndex = r.raftLog.findConflictByTerm(hintIndex, msg.LogTerm)
+		hintTerm, err := r.raftLog.term(hintIndex)
+		if err != nil {
+			panic(fmt.Sprintf("term(%d) must be valid, but got %v", hintIndex, err))
+		}
+		r.send(&pb.Message{
+			To:         msg.From,
+			Type:       pb.MessageType_MsgAppResp,
+			Index:      msg.Index,
+			Reject:     true,
+			RejectHint: hintIndex,
+			LogTerm:    hintTerm,
+		})
+	}
+}
+func (r *raft) handleHeartbeat(m *pb.Message) {
+	// 确保与 Leader 的Committed(Leader 已提交的最高日志索引)状态一致。
+	r.raftLog.commitTo(m.Commit)
+	r.send(&pb.Message{To: m.From, Type: pb.MessageType_MsgHeartbeatResp, Context: m.Context})
+}
 
 // Step the entry of all the message
 func (r *raft) Step(msg *pb.Message) error {
@@ -451,13 +508,11 @@ func (r *raft) Step(msg *pb.Message) error {
 			r.becomeFollower(msg.Term, msg.From)
 		}
 	}
-
 	// 根据消息类型处理不同消息
 	switch msg.Type {
 	// MsgHup：触发选举流程
 	case pb.MessageType_MsgHup:
 		r.startElection(msg)
-
 	// MsgVote：处理投票请求
 	case pb.MessageType_MsgVote:
 		r.handleVoteRequest(msg)
@@ -633,14 +688,16 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	m.To = to
 
 	term, _ := r.raftLog.term(pr.Next - 1)
+	// 将follower的想要的数据之后的数据段发送出去，这里是直接发送到结尾
 	ents := r.ms.ents[pr.Next:]
 	if len(ents) == 0 && !sendIfEmpty {
 		return false
 	}
 	var entries []*pb.Entry
 	for _, entry := range ents {
-		entries = append(entries, &entry)
+		entries = append(entries, entry)
 	}
+	// 封装消息数据
 	m.Type = pb.MessageType_MsgApp
 	m.Index = pr.Next - 1
 	m.Term = term
@@ -664,7 +721,8 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	return true
 }
 
-//
+//todo 与上层数据的交互暂时先不说
+
 //func (r *raft) advance(rd Ready) {
 //	r.reduceUncommittedSize(rd.CommittedEntries)
 //	// If entries were applied (or a snapshot), update our cursor for
@@ -724,11 +782,12 @@ func (r *raft) advance(rd Ready) {
 func (l *raftLog) term(i uint64) (uint64, error) {
 	// the valid term range is [index of dummy entry, last index]
 	dummyIndex := l.firstIndex() - 1
+	// out of bounder
 	if i < dummyIndex || i > l.lastIndex() {
 		// TODO: return an error instead?
 		return 0, nil
 	}
-	t, err := l.storage.Term(i)
+	t, err := l.ms.Term(i)
 	if err == nil {
 		return t, nil
 	}
@@ -748,7 +807,7 @@ func (r *raft) hardState() *HardState {
 }
 
 // the uncommitted entry size limit.
-func (r *raft) reduceUncommittedSize(ents []pb.Entry) {
+func (r *raft) reduceUncommittedSize(ents []*pb.Entry) {
 	if r.uncommittedSize == 0 {
 		// Fast-path for followers, who do not track or enforce the limit.
 		return

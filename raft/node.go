@@ -7,8 +7,8 @@ type Node interface {
 }
 
 type Ready struct {
-	Entries          []pb.Entry    // 需要持久化的新日志条目
-	CommittedEntries []pb.Entry    // 已提交待应用的日志条目
+	Entries          []*pb.Entry   // 需要持久化的新日志条目
+	CommittedEntries []*pb.Entry   // 已提交待应用的日志条目
 	Messages         []*pb.Message // 需要发送给其他节点的消息
 	HardState        HardState     // 需要持久化的硬状态（Term、Vote、Commit Index）
 	SoftState        SoftState     // 软状态（Leader ID、节点角色）

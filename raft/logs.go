@@ -11,6 +11,7 @@ type raftLog struct {
 	storage   Storage
 	committed uint64
 	applied   uint64
+	ms        *MemoryStorage
 	// maxNextEntsSize is the maximum number aggregate byte size of the messages
 	// returned from calls to nextEnts.
 	maxNextEntsSize uint64
@@ -20,6 +21,7 @@ func newLogWithSize(storage Storage, maxNextEntsSize uint64) *raftLog {
 	if storage == nil {
 		log.Panic("storage must not be nil")
 	}
+
 	log := &raftLog{
 		storage:         storage,
 		maxNextEntsSize: maxNextEntsSize,
@@ -41,7 +43,7 @@ func newLogWithSize(storage Storage, maxNextEntsSize uint64) *raftLog {
 // nextEnts returns all the available entries for execution.
 // If applied is smaller than the index of snapshot, it returns all committed
 // entries after the index of snapshot.
-func (l *raftLog) nextEnts() (ents []pb.Entry) {
+func (l *raftLog) nextEnts() (ents []*pb.Entry) {
 	off := max(l.applied+1, l.firstIndex())
 	if l.committed+1 > off {
 		ents, err := l.slice(off, l.committed+1, l.maxNextEntsSize)
@@ -61,7 +63,7 @@ func (l *raftLog) firstIndex() uint64 {
 	return index
 }
 
-func (l *raftLog) slice(lo, hi, maxSize uint64) ([]pb.Entry, error) {
+func (l *raftLog) slice(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
 	err := l.mustCheckOutOfBounds(lo, hi)
 	if err != nil {
 		return nil, err
@@ -69,7 +71,7 @@ func (l *raftLog) slice(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 	if lo == hi {
 		return nil, nil
 	}
-	var ents []pb.Entry
+	var ents []*pb.Entry
 	// 直接从存储中读取 lo 到 hi 的条目，不考虑 unstable 的 offset
 	// todo we just read log from memory,sync module do not finished yet
 	storedEnts, err := l.storage.Entries(lo, hi, maxSize)
@@ -142,4 +144,68 @@ func (l *raftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 		index--
 	}
 	return index
+}
+func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
+	logTerm := msg.LogTerm
+	index := msg.Index
+	//
+	if l.matchIndex(index, logTerm) {
+		// leader and follower have the same entry in this index
+		newIndex := l.ms.lastIndex() + uint64(len(msg.Entries))
+		// 就这现在最新的位置往前找冲突
+		conflict := l.findConflict(msg.Entries)
+		switch {
+		case conflict == 0:
+		case conflict <= l.committed:
+			log.Fatalln("entry %d conflict with committed entry [committed(%d)]", conflict, l.committed)
+		default:
+			offset := index + 1
+			err := l.ms.Append(msg.Entries[conflict-offset:])
+			if err != nil {
+				return 0, false
+			}
+		}
+		// update commited field in raftLog
+		l.commitTo(min(msg.Commit, newIndex))
+		return newIndex, true
+	}
+	return 0, false
+}
+func (l *raftLog) commitTo(tocommit uint64) {
+	// never decrease commit
+	if l.committed < tocommit {
+		if l.lastIndex() < tocommit {
+			log.Fatalln("tocommit(%d) is out of range [lastIndex(%d)]. Was the raft log corrupted, truncated, or lost?", tocommit, l.lastIndex())
+		}
+		l.committed = tocommit
+	}
+}
+func (l *raftLog) matchIndex(index uint64, term uint64) bool {
+	msIndex, err := l.ms.Term(index)
+	if err != nil {
+		return false
+	} else {
+		return msIndex == term
+	}
+}
+
+func (l *raftLog) findConflict(ents []*pb.Entry) uint64 {
+	for _, ne := range ents {
+		if !l.ms.matchTerm(ne.Index, ne.Term) {
+			if ne.Index <= l.ms.lastIndex() {
+				log.Println("found conflict at index %d [conflicting term: %d]",
+					ne.Index, ne.Term)
+			}
+			return ne.Index
+		}
+	}
+	return 0
+}
+
+func (ms *MemoryStorage) matchTerm(i, term uint64) bool {
+	t, err := ms.Term(i)
+	if err != nil {
+		return false
+	}
+	return t == term
 }

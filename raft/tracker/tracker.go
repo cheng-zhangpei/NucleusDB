@@ -23,13 +23,13 @@ func MakeProgressTracker() *ProgressTracker {
 }
 
 // AddNode 添加一个新节点到 ProgressTracker 中。
-func (pt *ProgressTracker) AddNode(id uint64) {
+func (pt *ProgressTracker) AddNode(id uint64, State StateType) {
 	pt.Progress[id] = &Progress{
 		Match:         0,
 		Next:          1,
 		RecentActive:  true,
 		ProbeSent:     false,
-		State:         StateFollower,
+		State:         State,
 		ElectionReset: false,
 	}
 }
@@ -119,15 +119,15 @@ func (pt *ProgressTracker) ResetElectionTimer() {
 	}
 }
 
-// UpdateCommitIndex 更新提交索引。
-func (pt *ProgressTracker) UpdateCommitIndex() {
-	committed := pt.Committed()
-	for _, pr := range pt.Progress {
-		if pr.State == StateLeader {
-			pr.Match = committed
-		}
-	}
-}
+//// UpdateCommitIndex 更新提交索引。
+//func (pt *ProgressTracker) UpdateCommitIndex() {
+//	committed := pt.Committed()
+//	for _, pr := range pt.Progress {
+//		if pr.State == StateLeader {
+//			pr.Match = committed
+//		}
+//	}
+//}
 
 // use Func(user give) to visit node(progress)
 func (p *ProgressTracker) Visit(f func(id uint64, pr *Progress)) {

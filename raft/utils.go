@@ -22,6 +22,6 @@ func IsLocalMsg(msgt pb.MessageType) bool {
 func IsResponseMsg(msgt pb.MessageType) bool {
 	return msgt == pb.MessageType_MsgAppResp || msgt == pb.MessageType_MsgVoteResp || msgt == pb.MessageType_MsgHeartbeatResp
 }
-func PayloadSize(e pb.Entry) int {
+func PayloadSize(e *pb.Entry) int {
 	return len(e.Data)
 }
