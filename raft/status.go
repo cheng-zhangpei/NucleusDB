@@ -40,8 +40,8 @@ func getProgressCopy(r *raft) map[uint64]tracker.Progress {
 	return m
 }
 
-func getBasicStatus(r *raft) BaseStatus {
-	s := BaseStatus{
+func getBasicStatus(r *raft) *BaseStatus {
+	s := &BaseStatus{
 		ID: r.id,
 	}
 	s.HardState = *r.hardState()
@@ -51,8 +51,8 @@ func getBasicStatus(r *raft) BaseStatus {
 }
 
 // getStatus gets a copy of the current raft status.
-func getStatus(r *raft) BaseStatus {
-	var s BaseStatus
+func getStatus(r *raft) *BaseStatus {
+	var s *BaseStatus
 	s = getBasicStatus(r)
 	if s.RaftState == StateLeader {
 		s.Progress = getProgressCopy(r)

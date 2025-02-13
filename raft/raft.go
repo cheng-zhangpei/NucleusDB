@@ -77,9 +77,12 @@ type RaftConfig struct {
 	// limit is exceeded, proposals will begin to return ErrProposalDropped
 	// errors. Note: 0 for no limit.
 	MaxUncommittedEntriesSize uint64
-
-	CheckQuorum bool
-	Storage     Storage
+	sendInterval              time.Duration
+	CheckQuorum               bool
+	Storage                   Storage
+	// 状态机内部网络通讯地址
+	grpcServerAddr string
+	grpcClientAddr string
 }
 
 // validate raft config validation
@@ -775,7 +778,7 @@ func (r *lockedRand) Intn(n int) int {
 func (r *raft) pastElectionTimeout() bool {
 	return r.electionElapsed >= uint64(r.randomizedElectionTimeout)
 }
-func (r *raft) advance(rd Ready) {
+func (r *raft) advance(rd *Ready) {
 	// 处理已提交的日志条目
 	r.reduceUncommittedSize(rd.CommittedEntries)
 }

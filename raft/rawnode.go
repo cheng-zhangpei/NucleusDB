@@ -56,14 +56,14 @@ func (rn *RawNode) Campaign() error {
 }
 
 // Step advances the state machine using the given message.
-func (rn *RawNode) Step(msg pb.Message) error {
+func (rn *RawNode) Step(msg *pb.Message) error {
 	// ignore unexpected local messages receiving over network
 	if IsLocalMsg(msg.Type) {
 		return ErrStepLocalMsg
 	}
 	// put request to the raft structure
 	if pr := rn.raft.processTracker.Progress[msg.From]; pr != nil || !IsResponseMsg(msg.Type) {
-		return rn.raft.Step(&msg)
+		return rn.raft.Step(msg)
 	}
 	return ErrStepPeerNotFound
 }
@@ -72,7 +72,7 @@ func (rn *RawNode) Step(msg pb.Message) error {
 // includes appending and applying entries or a snapshot, updating the HardState,
 // and sending messages. The returned Ready() *must* be handled and subsequently
 // passed back via Advance().
-func (rn *RawNode) Ready() Ready {
+func (rn *RawNode) Ready() *Ready {
 	rd := rn.readyWithoutAccept()
 	rn.acceptReady(rd)
 	// 到这个位置我知道上层的应用已经把事情给做完了
@@ -81,14 +81,14 @@ func (rn *RawNode) Ready() Ready {
 
 // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
 // is no obligation that the Ready must be handled.
-func (rn *RawNode) readyWithoutAccept() Ready {
-	return newReady(rn.raft, rn.prevSoftSt, *rn.prevHardSt)
+func (rn *RawNode) readyWithoutAccept() *Ready {
+	return newReady(rn.raft, rn.prevSoftSt, rn.prevHardSt)
 }
 
 // acceptReady is called when the consumer of the RawNode has decided to go
 // ahead and handle a Ready. Nothing must alter the state of the RawNode between
 // this call and the prior call to Ready().
-func (rn *RawNode) acceptReady(rd Ready) {
+func (rn *RawNode) acceptReady(rd *Ready) {
 	if &rd.SoftState != nil {
 		rn.prevSoftSt = &rd.SoftState
 	}
@@ -97,14 +97,31 @@ func (rn *RawNode) acceptReady(rd Ready) {
 
 // Advance notifies the RawNode that the application has applied and saved progress in the
 // last Ready results.
-func (rn *RawNode) Advance(rd Ready) {
-	if !IsEmptyHardState(rd.HardState) {
+func (rn *RawNode) Advance(rd *Ready) {
+	if !IsEmptyHardState(&rd.HardState) {
 		rn.prevHardSt = &rd.HardState
 	}
 	rn.raft.advance(rd)
 }
 
 // IsEmptyHardState returns true if the given HardState is empty.
-func IsEmptyHardState(st HardState) bool {
-	return isHardStateEqual(st, emptyState)
+func IsEmptyHardState(st *HardState) bool {
+	return isHardStateEqual(st, &emptyState)
+}
+
+// HasReady called when RawNode user need to check if any Ready pending.
+// Checking logic in this method should be consistent with Ready.containsUpdates().
+func (rn *RawNode) HasReady() bool {
+	r := rn.raft
+	if !r.softState().equal(rn.prevSoftSt) {
+		// has changes
+		return true
+	}
+	if hardSt := r.hardState(); !IsEmptyHardState(hardSt) && !isHardStateEqual(hardSt, rn.prevHardSt) {
+		return true
+	}
+	if len(r.msgs) > 0 || len(r.raftLog.ms.ents) > 0 || len(r.raftLog.nextEnts()) > 0 {
+		return true
+	}
+	return false
 }
