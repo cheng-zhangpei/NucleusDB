@@ -52,6 +52,7 @@ type node struct {
 	// use it for send message
 	client *RaftClient
 }
+
 type raftServer struct {
 	pb.UnimplementedRaftServer
 	node *node
@@ -113,14 +114,18 @@ func RestartNode(c *RaftConfig) Node {
 	if err != nil {
 		panic(err)
 	}
+	//err = rn.Bootstrap(peers)
+	//if err != nil {
+	//	c.Logger.Warningf("error occurred during starting a new node: %v", err)
+	//}
 	n := newNode(rn, c)
 	// 启动 gRPC 服务器
 	registerRPCServer(n, c.grpcServerAddr)
-	// 开启接受消息主进程
-	go n.run()
 	// 开启监控缓冲区的信息发送进程
 	n.sendMessage(c.sendInterval)
-	//
+	// 开启接受消息主进程
+	n.startTicker(c.tickInterval)
+	go n.run()
 	return &n
 }
 func registerRPCServer(n *node, addr string) {
@@ -248,7 +253,7 @@ func (n *node) Tick() {
 }
 
 // sendMessage: 开一个线程, 将msg暂存区中的数据发送出去
-func (n *node) sendMessage(sleepTime time.Duration) {
+func (n *node) sendMessages(sleepTime time.Duration) {
 	// 启动一个 goroutine 来处理消息发送
 	go func() {
 		// 创建一个互斥锁，以确保线程安全地访问暂存区
@@ -268,7 +273,7 @@ func (n *node) sendMessage(sleepTime time.Duration) {
 				mutex.Unlock()
 
 				// 发送消息的逻辑
-				if err := n.send(msg); err != nil {
+				if err := n.sendAllCache(msg); err != nil {
 					log.Printf("Error sending message: %v", err)
 					continue
 				} else {
@@ -298,7 +303,7 @@ func (n *node) sendMessage(sleepTime time.Duration) {
 	}()
 }
 
-func (n *node) send(msgs []*pb.Message) error {
+func (n *node) sendAllCache(msgs []*pb.Message) error {
 	for _, m := range msgs {
 		if m != nil {
 			// 发送消息到其他节点
@@ -318,6 +323,24 @@ func (n *node) send(msgs []*pb.Message) error {
 	}
 	return nil
 }
+func (n *node) startTicker(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(time.Millisecond * interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				select {
+				case n.tickc <- struct{}{}:
+				default:
+				}
+			case <-n.stop:
+				return
+			}
+		}
+	}()
+}
+
 func (c *RaftClient) Close() error {
 	return c.conn.Close()
 }

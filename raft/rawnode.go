@@ -22,6 +22,10 @@ type RawNode struct {
 	prevSoftSt *SoftState
 	prevHardSt *HardState
 }
+type Peer struct {
+	ID      uint64
+	Context []byte
+}
 
 // NewRawNode instantiates a RawNode from the given configuration.
 //
@@ -124,4 +128,20 @@ func (rn *RawNode) HasReady() bool {
 		return true
 	}
 	return false
+}
+
+func (rn *RawNode) Bootstrap(peers []Peer) error {
+	if len(peers) == 0 {
+		return errors.New("must provide at least one peer to Bootstrap")
+	}
+	lastIndex, err := rn.raft.raftLog.storage.LastIndex()
+	if err != nil {
+		return err
+	}
+	if lastIndex != 0 {
+		return errors.New("can't bootstrap a nonempty Storage")
+	}
+	rn.prevHardSt = &emptyState
+	rn.raft.becomeFollower(1, None)
+	return nil
 }

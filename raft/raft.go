@@ -83,6 +83,8 @@ type RaftConfig struct {
 	// 状态机内部网络通讯地址
 	grpcServerAddr string
 	grpcClientAddr string
+	// ticker tick最小间隔
+	tickInterval time.Duration
 }
 
 // validate raft config validation
@@ -778,10 +780,11 @@ func (r *lockedRand) Intn(n int) int {
 func (r *raft) pastElectionTimeout() bool {
 	return r.electionElapsed >= uint64(r.randomizedElectionTimeout)
 }
-func (r *raft) advance(rd *Ready) {
-	// 处理已提交的日志条目
-	r.reduceUncommittedSize(rd.CommittedEntries)
-}
+
+//	func (r *raft) advance(rd *Ready) {
+//		// 处理已提交的日志条目
+//		r.reduceUncommittedSize(rd.CommittedEntries)
+//	}
 func (l *raftLog) term(i uint64) (uint64, error) {
 	// the valid term range is [index of dummy entry, last index]
 	dummyIndex := l.firstIndex() - 1
