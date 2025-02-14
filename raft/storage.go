@@ -86,7 +86,7 @@ func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
 		return nil, ErrCompacted
 	}
 	if hi > ms.lastIndex()+1 {
-		log.Println("entries' hi(%d) is out of bound lastindex(%d)", hi, ms.lastIndex())
+		log.Printf("entries' hi(%d) is out of bound lastindex(%d)\n", hi, ms.lastIndex())
 	}
 	// only contains dummy entries.
 	if len(ms.ents) == 1 {
@@ -120,6 +120,9 @@ func (ms *MemoryStorage) LastIndex() (uint64, error) {
 
 // *ms.ents[0].Index is the log entry first pos in the global log entry
 func (ms *MemoryStorage) lastIndex() uint64 {
+	if ms.ents[0] == nil {
+		return 0
+	}
 	return ms.ents[0].Index + uint64(len(ms.ents)) - 1
 }
 
@@ -131,7 +134,12 @@ func (ms *MemoryStorage) FirstIndex() (uint64, error) {
 }
 
 func (ms *MemoryStorage) firstIndex() uint64 {
-	return ms.ents[0].Index + 1
+	if ms.ents[0] != nil {
+
+		return ms.ents[0].Index + 1
+	} else {
+		return 0
+	}
 }
 
 // Snapshot implements the Storage interface.
@@ -195,7 +203,7 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 		return ErrCompacted
 	}
 	if compactIndex > ms.lastIndex() {
-		log.Println("compact %d is out of bound lastindex(%d)", compactIndex, ms.lastIndex())
+		log.Printf("compact %d is out of bound lastindex(%d)\n", compactIndex, ms.lastIndex())
 	}
 
 	i := compactIndex - offset
@@ -237,7 +245,7 @@ func (ms *MemoryStorage) Append(entries []*pb.Entry) error {
 	case uint64(len(ms.ents)) == offset:
 		ms.ents = append(ms.ents, entries...)
 	default:
-		log.Println("missing log entry [last: %d, append at: %d]",
+		log.Printf("missing log entry [last: %d, append at: %d]\n",
 			ms.lastIndex(), entries[0].Index)
 	}
 	return nil

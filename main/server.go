@@ -42,7 +42,7 @@ func main() {
 }
 
 func (svr *BitcaskServer) listen() {
-	log.Println("bitcask server running, ready to accept connections.")
+	log.Printf("bitcask server running, ready to accept connections.")
 	_ = svr.server.ListenAndServe()
 }
 
@@ -79,5 +79,5 @@ func (svr *BitcaskServer) close(conn redcon.Conn, err error) {
 //	if err != nil {
 //		panic(err)
 //	}
-//	fmt.Println(res)
+//	fmt.Printf(res)
 //}

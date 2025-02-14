@@ -101,12 +101,12 @@ func (rn *RawNode) acceptReady(rd *Ready) {
 
 // Advance notifies the RawNode that the application has applied and saved progress in the
 // last Ready results.
-func (rn *RawNode) Advance(rd *Ready) {
-	if !IsEmptyHardState(&rd.HardState) {
-		rn.prevHardSt = &rd.HardState
-	}
-	rn.raft.advance(rd)
-}
+//func (rn *RawNode) Advance(rd *Ready) {
+//	if !IsEmptyHardState(&rd.HardState) {
+//		rn.prevHardSt = &rd.HardState
+//	}
+//	rn.raft.advance(rd)
+//}
 
 // IsEmptyHardState returns true if the given HardState is empty.
 func IsEmptyHardState(st *HardState) bool {

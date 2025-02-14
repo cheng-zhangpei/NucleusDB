@@ -21,11 +21,11 @@ func newLogWithSize(storage Storage, maxNextEntsSize uint64) *raftLog {
 	if storage == nil {
 		log.Panic("storage must not be nil")
 	}
-
 	log := &raftLog{
 		storage:         storage,
 		maxNextEntsSize: maxNextEntsSize,
 	}
+
 	firstIndex, err := storage.FirstIndex()
 	if err != nil {
 		panic(err)
@@ -48,7 +48,7 @@ func (l *raftLog) nextEnts() (ents []*pb.Entry) {
 	if l.committed+1 > off {
 		ents, err := l.slice(off, l.committed+1, l.maxNextEntsSize)
 		if err != nil {
-			log.Println("unexpected error when getting unapplied entries (%v)", err)
+			log.Printf("unexpected error when getting unapplied entries")
 		}
 		return ents
 	}
@@ -78,7 +78,7 @@ func (l *raftLog) slice(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
 	if err == ErrCompacted {
 		return nil, err
 	} else if err == ErrUnavailable {
-		log.Fatalln("entries[%d:%d) is unavailable from storage", lo, hi)
+		log.Fatalln("entries is unavailable from storage")
 	} else if err != nil {
 		panic(err)
 	}
@@ -94,7 +94,7 @@ func (l *raftLog) slice(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
 
 func (l *raftLog) mustCheckOutOfBounds(lo, hi uint64) error {
 	if lo > hi {
-		log.Fatalln("invalid slice %d > %d", lo, hi)
+		log.Fatalf("invalid slice %d > %d\n", int(lo), int(hi))
 	}
 	fi := l.firstIndex()
 	if lo < fi {
@@ -103,7 +103,7 @@ func (l *raftLog) mustCheckOutOfBounds(lo, hi uint64) error {
 
 	length := l.lastIndex() + 1 - fi
 	if hi > fi+length {
-		log.Fatalln("slice[%d,%d) out of bound [%d,%d]", lo, hi, fi, l.lastIndex())
+		log.Fatalf("slice[%d,%d) out of bound [%d,%d]\n", lo, hi, fi, l.lastIndex())
 	}
 	return nil
 }
@@ -119,7 +119,7 @@ func (l *raftLog) lastIndex() uint64 {
 func (l *raftLog) lastTerm() uint64 {
 	t, err := l.term(l.lastIndex())
 	if err != nil {
-		log.Fatalln("unexpected error when getting the last term (%v)", err)
+		log.Fatalln("unexpected error when getting the last term")
 	}
 	return t
 }
@@ -132,7 +132,7 @@ func (l *raftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 		// there is odd behavior with peers that have no log, in which case
 		// lastIndex will return zero and firstIndex will return one, which
 		// leads to calls with an index of zero into this method.
-		log.Println("index(%d) is out of range [0, lastIndex(%d)] in findConflictByTerm",
+		log.Printf("index(%d) is out of range [0, lastIndex(%d)] in findConflictByTerm\n",
 			index, li)
 		return index
 	}
@@ -157,7 +157,7 @@ func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 		switch {
 		case conflict == 0:
 		case conflict <= l.committed:
-			log.Fatalln("entry %d conflict with committed entry [committed(%d)]", conflict, l.committed)
+			log.Fatalf("entry %d conflict with committed entry [committed(%d)]\n", conflict, l.committed)
 		default:
 			offset := index + 1
 			err := l.ms.Append(msg.Entries[conflict-offset:])
@@ -175,7 +175,7 @@ func (l *raftLog) commitTo(tocommit uint64) {
 	// never decrease commit
 	if l.committed < tocommit {
 		if l.lastIndex() < tocommit {
-			log.Fatalln("tocommit(%d) is out of range [lastIndex(%d)]. Was the raft log corrupted, truncated, or lost?", tocommit, l.lastIndex())
+			log.Fatalf("tocommit(%d) is out of range [lastIndex(%d)]. Was the raft log corrupted, truncated, or lost?\n", tocommit, l.lastIndex())
 		}
 		l.committed = tocommit
 	}
@@ -193,7 +193,7 @@ func (l *raftLog) findConflict(ents []*pb.Entry) uint64 {
 	for _, ne := range ents {
 		if !l.ms.matchTerm(ne.Index, ne.Term) {
 			if ne.Index <= l.ms.lastIndex() {
-				log.Println("found conflict at index %d [conflicting term: %d]",
+				log.Printf("found conflict at index %d [conflicting term: %d]\n",
 					ne.Index, ne.Term)
 			}
 			return ne.Index

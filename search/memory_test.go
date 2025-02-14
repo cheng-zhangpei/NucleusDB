@@ -95,8 +95,8 @@ func TestMemoryStructureWithChinese(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get memory: %v", err)
 	}
-	fmt.Println("All Memory:")
-	fmt.Println(allMemory)
+	fmt.Printf("All Memory:")
+	fmt.Printf(allMemory)
 
 	// 测试 matchSearch：匹配搜索
 	testCases := []struct {

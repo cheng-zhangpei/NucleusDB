@@ -133,7 +133,7 @@ func (db *DB) Close() error {
 	defer func() {
 		err := db.fileLock.Unlock()
 		if err != nil {
-			fmt.Println("close file lock err")
+			fmt.Printf("close file lock err")
 			return
 		}
 	}()

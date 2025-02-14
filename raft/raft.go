@@ -55,36 +55,17 @@ type stepFunc func(r *raft, msg *pb.Message) error
 
 // raft consensus algorithm: build a simple distributed database in order to adapt the env of k8s
 type RaftConfig struct {
-	ID uint64
-	// ElectionTick is the number of Node.Tick invocations that must pass between
-	// elections. That is, if a follower does not receive any message from the
-	// leader of current term before ElectionTick has elapsed, it will become
-	// candidate and start an election. ElectionTick must be greater than
-	// HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid
-	// unnecessary leader switching.
-	ElectionTick uint64
-	// HeartbeatTick is the number of Node.Tick invocations that must pass between
-	// heartbeats. That is, a leader sends heartbeat messages to maintain its
-	// leadership every HeartbeatTick ticks.
-	HeartbeatTick uint64
-	// MaxSizePerMsg limit the size of byte message that user can submit
-	MaxSizePerMsg uint64
-	// MaxCommittedSizePerReady limits the size of the committed entries which
-	// can be applied.
-	MaxCommittedSizePerReady uint64
-	// MaxUncommittedEntriesSize limits the aggregate byte size of the
-	// uncommitted entries that may be appended to a leader's log. Once this
-	// limit is exceeded, proposals will begin to return ErrProposalDropped
-	// errors. Note: 0 for no limit.
-	MaxUncommittedEntriesSize uint64
-	sendInterval              time.Duration
-	CheckQuorum               bool
-	Storage                   Storage
-	// 状态机内部网络通讯地址
-	grpcServerAddr string
-	grpcClientAddr string
-	// ticker tick最小间隔
-	tickInterval time.Duration
+	ID                        uint64        `yaml:"id"`
+	ElectionTick              uint64        `yaml:"election_tick"`
+	HeartbeatTick             uint64        `yaml:"heartbeat_tick"`
+	MaxSizePerMsg             uint64        `yaml:"max_size_per_msg"`
+	MaxCommittedSizePerReady  uint64        `yaml:"max_committed_size_per_ready"`
+	MaxUncommittedEntriesSize uint64        `yaml:"max_uncommitted_entries_size"`
+	SendInterval              time.Duration `yaml:"send_interval"`
+	CheckQuorum               bool          `yaml:"check_quorum"`
+	GRPCServerAddr            string        `yaml:"grpc_server_addr"`
+	GRPCClientAddr            []string      `yaml:"grpc_client_addr"`
+	TickInterval              time.Duration `yaml:"tick_interval"`
 }
 
 // validate raft config validation
@@ -148,19 +129,18 @@ type raft struct {
 
 func newRaft(config *RaftConfig) *raft {
 	if err := config.validate(); err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 	// raft log initialization
-	raftlog := newLogWithSize(config.Storage, config.MaxCommittedSizePerReady)
+	ms, _ := NewMemoryStorage()
+
+	raftlog := newLogWithSize(ms, config.MaxCommittedSizePerReady)
 	// state initializetion
 	//hs, cs, err := config.Storage.InitialState()
 	//if err != nil {
 	//	panic(err)
 	//}
-	ms, err := NewMemoryStorage()
-	if err != nil {
-		return nil
-	}
+
 	r := &raft{
 		id:                 config.ID,
 		lead:               None,
@@ -234,7 +214,7 @@ func (r *raft) tickElection() {
 		r.electionElapsed = 0
 		var msgType pb.MessageType = pb.MessageType_MsgHup
 		if err := r.Step(&pb.Message{From: r.id, Type: msgType}); err != nil {
-			log.Println("error occurred during election: %v", err)
+			log.Printf("error occurred during election: %v\n", err)
 		}
 	}
 }
@@ -268,7 +248,7 @@ func (r *raft) becomeFollower(term uint64, lead uint64) {
 	r.lead = lead
 	r.state = StateFollower
 	r.step = stepFollower
-	log.Println("%x became follower at term %d", r.id, r.Term)
+	log.Printf("%x became follower at term %d\n", r.id, r.Term)
 }
 
 func (r *raft) becomeCandidate() {
@@ -282,7 +262,7 @@ func (r *raft) becomeCandidate() {
 	r.state = StateCandidate
 	r.step = stepCandidate
 
-	log.Println("%x became candidate at term %d", r.id, r.Term)
+	log.Printf("%x became candidate at term %d\n", r.id, r.Term)
 }
 
 func (r *raft) becomeLeader() {
@@ -299,10 +279,10 @@ func (r *raft) becomeLeader() {
 	emptyEnt := pb.Entry{Data: nil}
 	if !r.appendEntry(emptyEnt) {
 		// This won't happen because we just called reset() above.
-		log.Println("empty entry was dropped")
+		log.Printf("empty entry was dropped")
 	}
 	//r.reduceUncommittedSize([]pb.Entry{emptyEnt})
-	log.Println("%x became leader at term %d", r.id, r.Term)
+	log.Printf("%x became leader at term %d\n", r.id, r.Term)
 }
 
 // ===========================================================state change==========================================
@@ -317,7 +297,7 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		pr := r.processTracker.Progress[msg.To]
 
 		if len(msg.Entries) == 0 {
-			log.Fatalln("%x stepped empty MsgProp", r.id)
+			log.Fatalf("%x stepped empty MsgProp\n", r.id)
 		}
 
 		if r.processTracker.Progress[r.id] == nil {
@@ -333,7 +313,7 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		case pb.MessageType_MsgAppResp:
 			pr.RecentActive = true
 			if msg.Reject {
-				log.Println("%x received MsgAppResp(rejected, hint: (index %d, term %d)) from %x for index %d",
+				log.Printf("%x received MsgAppResp(rejected, hint: (index %d, term %d)) from %x for index %d\n",
 					r.id, msg.RejectHint, msg.LogTerm, msg.From, msg.Index)
 				nextProbeIdx := msg.RejectHint
 				if msg.Term > 0 {
@@ -341,7 +321,7 @@ func stepLeader(r *raft, msg *pb.Message) error {
 				}
 				// update the Next field in progressTrack
 				if pr.MaybeDecrTo(msg.Index, nextProbeIdx) {
-					log.Println("%x decreased progress of %x to [%s]", r.id, msg.From, pr)
+					log.Printf("%x decreased progress of %x to [%s]\n", r.id, msg.From, pr)
 					if pr.State == tracker.StateReplicate {
 						pr.BecomeProbe()
 					}
@@ -424,7 +404,7 @@ func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 func stepCandidate(r *raft, msg *pb.Message) error {
 	switch msg.Type {
 	case pb.MessageType_MsgProp:
-		log.Fatalln("%x no leader at term %d; dropping proposal", r.id, r.Term)
+		log.Fatalf("%x no leader at term %d; dropping proposal\n", r.id, r.Term)
 		return ErrProposalDropped
 	case pb.MessageType_MsgApp:
 		r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
@@ -447,7 +427,7 @@ func stepFollower(r *raft, msg *pb.Message) error {
 	switch msg.Type {
 	case pb.MessageType_MsgProp:
 		if r.lead == None {
-			log.Println("%x no leader at term %d; dropping proposal", r.id, r.Term)
+			log.Printf("%x no leader at term %d; dropping proposal\n", r.id, r.Term)
 			return ErrProposalDropped
 		}
 		msg.To = r.lead
@@ -537,7 +517,7 @@ func (r *raft) Step(msg *pb.Message) error {
 // only candidate
 func (r *raft) startElection(msg *pb.Message) {
 	if r.state == StateLeader {
-		log.Println("the node already is leader")
+		log.Printf("the node already is leader")
 		return
 	}
 	r.becomeCandidate()
@@ -551,7 +531,7 @@ func (r *raft) startElection(msg *pb.Message) {
 // handleVoteRequest处理投票请求消息，决定是否授予投票。
 func (r *raft) handleVoteRequest(msg *pb.Message) {
 	if r.state == StateLeader {
-		log.Println("leader can not handle the vote request")
+		log.Printf("leader can not handle the vote request")
 		return
 	}
 	// two factor: 1. the node receive the msg that it has voted. 2. do not vote yet
@@ -564,14 +544,14 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 	// least as up-to-date as receiver’s log, grant vote
 	var msgType pb.MessageType = pb.MessageType_MsgVoteResp
 	if canVote {
-		log.Println("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d",
+		log.Printf("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d\n",
 			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
 
 		r.send(&pb.Message{To: msg.From, Term: msg.Term, Type: msgType})
 		r.electionElapsed = 0
 		r.Vote = msg.From
 	} else {
-		log.Println("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
+		log.Printf("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d\n",
 			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
 		var reject = true
 		r.send(&pb.Message{To: msg.From, Term: r.Term, Type: msgType, Reject: reject})
@@ -624,10 +604,10 @@ func (r *raft) poll(id uint64, voteGranted bool) bool {
 
 	// 判断是否赢得多数票
 	if granted > len(r.votes)/2 {
-		log.Println("%x won the election with %d votes", r.id, granted)
+		log.Printf("%x won the election with %d votes\n", r.id, granted)
 		return true
 	} else if rejected > len(r.votes)/2 {
-		log.Println("%x lost the election with %d votes", r.id, rejected)
+		log.Printf("%x lost the election with %d votes\n", r.id, rejected)
 		return false
 	}
 	return false
@@ -718,7 +698,7 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 		case tracker.StateProbe:
 			pr.ProbeSent = true
 		default:
-			log.Fatalln("%x is sending append in unhandled state %s", r.id, pr.State)
+			log.Fatalf("%x is sending append in unhandled state \n", r.id)
 		}
 	}
 	r.send(&m)

@@ -215,8 +215,8 @@ func (cs *Compressor) storeCompressedData(compressedData string, realKeys []stri
 	//	if err != nil {
 	//		return err
 	//	}
-	//	fmt.Println(string(record.dataField))
-	//	fmt.Println("------------------------------------------")
+	//	fmt.Printf(string(record.dataField))
+	//	fmt.Printf("------------------------------------------")
 	//}
 
 	return nil

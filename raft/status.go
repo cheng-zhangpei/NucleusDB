@@ -59,3 +59,9 @@ func getStatus(r *raft) *BaseStatus {
 	}
 	return s
 }
+func isHardStateEqual(a, b *HardState) bool {
+	return a.Term == b.Term && a.Vote == b.Vote && a.Commit == b.Commit
+}
+func (a *SoftState) equal(b *SoftState) bool {
+	return a.Lead == b.Lead && a.RaftState == b.RaftState
+}

@@ -1,0 +1,15 @@
+
+id: 3  # 当前节点的 ID
+election_tick: 10  # 选举间隔（以心跳间隔为单位）
+heartbeat_tick: 1  # 心跳间隔（以 Tick 为单位）
+max_size_per_msg: 1024  # 每条消息的最大大小（单位：字节）
+max_committed_size_per_ready: 4096  # 每次 Ready 的最大提交大小（单位：字节）
+max_uncommitted_entries_size: 1048576  # 未提交日志条目的最大总大小（单位：字节，0 表示无限制）
+send_interval: 1000  # 广播消息的间隔（时间格式，如 1s、500ms）
+check_quorum: true  # 是否开启法定人数检查
+grpc_server_addr: 127.0.0.1:5003  # 本节点的 gRPC 服务地址
+grpc_client_addr:  # 其他节点的 gRPC 地址列表
+  - 127.0.0.1:5001
+  - 127.0.0.1:5002
+  - 127.0.0.1:5003
+tick_interval: 500  # Tick 间隔（时间格式，如 500ms、1s）

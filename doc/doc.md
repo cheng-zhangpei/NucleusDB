@@ -497,7 +497,7 @@ func main() {
 	http.HandleFunc("/bitcask/prefix", handlePrefix) // 新增前缀查询路由
 
 	// 启动 HTTP 服务
-	log.Println("Starting HTTP server on localhost:8080...")
+	log.Printf("Starting HTTP server on localhost:8080...")
 	if err := http.ListenAndServe("localhost:8080", nil); err != nil {
 		log.Fatalf("Failed to start HTTP server: %v\n", err)
 	}

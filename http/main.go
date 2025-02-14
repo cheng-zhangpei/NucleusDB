@@ -22,7 +22,7 @@ func init() {
 	if err != nil {
 		panic(fmt.Sprintf("failed to open db: %v", err))
 	}
-	log.Println("Database created successfully at:", options.DirPath)
+	log.Printf("Database created successfully at:", options.DirPath)
 }
 
 func handlePut(writer http.ResponseWriter, request *http.Request) {
@@ -127,7 +127,7 @@ func handleListKeys(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	log.Println("Received request to list all keys")
+	log.Printf("Received request to list all keys")
 
 	keys := db.ListKeys()
 	writer.Header().Set("Content-Type", "application/json")
@@ -145,7 +145,7 @@ func handleStat(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	log.Println("Received request to get database statistics")
+	log.Printf("Received request to get database statistics")
 
 	stat := db.Stat()
 	writer.Header().Set("Content-Type", "application/json")
@@ -159,7 +159,7 @@ func handleMerge(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	log.Println("Received request to get database statistics")
+	log.Printf("Received request to get database statistics")
 
 	err := db.Merge()
 	if err != nil {
@@ -181,7 +181,7 @@ func handlePrefix(writer http.ResponseWriter, request *http.Request) {
 	prefix := request.URL.Query().Get("prefix")
 	if prefix == "" {
 		http.Error(writer, "prefix parameter is required", http.StatusBadRequest)
-		log.Println("Prefix parameter is missing in request")
+		log.Printf("Prefix parameter is missing in request")
 		return
 	}
 
@@ -498,7 +498,7 @@ func main() {
 	http.HandleFunc("/memory/newCompressor", handleCreateCompressor)
 
 	// 启动 HTTP 服务
-	log.Println("Starting HTTP server on 172.31.88.128:9090...")
+	log.Printf("Starting HTTP server on 172.31.88.128:9090...")
 	if err := http.ListenAndServe("172.31.88.135:9090", nil); err != nil {
 		log.Fatalf("Failed to start HTTP server: %v\n", err)
 	}

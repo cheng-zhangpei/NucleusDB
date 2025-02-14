@@ -15,13 +15,6 @@ import (
 type Node interface {
 }
 
-type Ready struct {
-	Entries          []*pb.Entry   // 需要持久化的新日志条目
-	CommittedEntries []*pb.Entry   // 已提交待应用的日志条目
-	Messages         []*pb.Message // 需要发送给其他节点的消息
-	HardState        HardState     // 需要持久化的硬状态（Term、Vote、Commit Index）
-	SoftState        SoftState     // 软状态（Leader ID、节点角色）
-}
 type msgWithResult struct {
 	m      *pb.Message
 	result chan error
@@ -50,7 +43,7 @@ type node struct {
 	// raft 是底层的 Raft 状态机，负责管理节点的日志复制和状态转换。
 	rn *RawNode
 	// use it for send message
-	client *RaftClient
+	client []*RaftClient
 }
 
 type raftServer struct {
@@ -62,19 +55,24 @@ type RaftClient struct {
 	rpc  pb.RaftClient
 }
 
-func NewRaftClient(address string) *RaftClient {
-	// 创建与 Raft 服务器的连接
-	conn, err := grpc.NewClient(address, grpc.WithInsecure())
-	if err != nil {
-		panic(err)
+func NewRaftClient(addresses []string, serverAddr string) []*RaftClient {
+	clients := []*RaftClient{}
+	for _, addr := range addresses {
+		if addr == serverAddr {
+			continue
+		}
+		conn, err := grpc.Dial(addr, grpc.WithInsecure())
+		if err != nil {
+			log.Fatalf("Failed to connect to %s: %v", addr, err)
+		}
+		rpcClient := pb.NewRaftClient(conn)
+		clients = append(clients, &RaftClient{
+			conn: conn,
+			rpc:  rpcClient,
+		})
+		log.Printf("start an peer client for %s\n", addr)
 	}
-	// 创建 Raft 客户端
-	rpcClient := pb.NewRaftClient(conn)
-
-	return &RaftClient{
-		conn: conn,
-		rpc:  rpcClient,
-	}
+	return clients
 }
 
 func (s *raftServer) ProcessMessage(ctx context.Context, msg *pb.Message) (*pb.Message, error) {
@@ -83,33 +81,7 @@ func (s *raftServer) ProcessMessage(ctx context.Context, msg *pb.Message) (*pb.M
 	return &pb.Message{}, nil
 }
 
-func newReady(r *raft, prevSoftSt *SoftState, prevHardSt *HardState) *Ready {
-	rd := &Ready{
-		//
-		Entries:          r.ms.ents,
-		CommittedEntries: r.raftLog.nextEnts(),
-		Messages:         r.msgs,
-	}
-
-	// 检查软状态是否发生变化
-	if softSt := r.softState(); softSt != nil && prevSoftSt == nil {
-		rd.SoftState = *softSt
-	}
-	// 检查硬状态是否发生变化
-	if hardSt := r.hardState(); !isHardStateEqual(hardSt, prevHardSt) {
-		rd.HardState = *hardSt
-	}
-	return rd
-}
-
-func (a *SoftState) equal(b *SoftState) bool {
-	return a.Lead == b.Lead && a.RaftState == b.RaftState
-}
-
-func isHardStateEqual(a, b *HardState) bool {
-	return a.Term == b.Term && a.Vote == b.Vote && a.Commit == b.Commit
-}
-func RestartNode(c *RaftConfig) Node {
+func StartNode(c *RaftConfig) Node {
 	rn, err := NewRawNode(c)
 	if err != nil {
 		panic(err)
@@ -120,15 +92,16 @@ func RestartNode(c *RaftConfig) Node {
 	//}
 	n := newNode(rn, c)
 	// 启动 gRPC 服务器
-	registerRPCServer(n, c.grpcServerAddr)
+	registerRPCServer(n, c.GRPCServerAddr)
 	// 开启监控缓冲区的信息发送进程
-	n.sendMessage(c.sendInterval)
+	sendMessages(c.SendInterval, n)
 	// 开启接受消息主进程
-	n.startTicker(c.tickInterval)
-	go n.run()
+	startTicker(c.TickInterval, n)
+	go run(n)
 	return &n
 }
 func registerRPCServer(n *node, addr string) {
+
 	s := grpc.NewServer()
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -136,12 +109,14 @@ func registerRPCServer(n *node, addr string) {
 	}
 	pb.RegisterRaftServer(s, &raftServer{node: n})
 	go func() {
+		log.Printf("start rpc server on %s\n", addr)
 		err := s.Serve(lis)
 		if err != nil {
 			panic(err)
 		}
 	}()
 }
+
 func newNode(rn *RawNode, config *RaftConfig) *node {
 	return &node{
 		propc:    make(chan *msgWithResult),
@@ -156,7 +131,7 @@ func newNode(rn *RawNode, config *RaftConfig) *node {
 		stop:   make(chan struct{}),
 		status: make(chan chan *BaseStatus),
 		rn:     rn,
-		client: NewRaftClient(config.grpcClientAddr),
+		client: NewRaftClient(config.GRPCClientAddr, config.GRPCServerAddr),
 	}
 }
 
@@ -172,36 +147,37 @@ func (n *node) Stop() {
 	<-n.done
 }
 
-func (n *node) run() {
+func run(n *node) {
 	var propc chan *msgWithResult
-	var readyc chan *Ready
-	var advancec chan struct{}
-	var rd *Ready
+	//var readyc chan *Ready
+	////var advancec chan struct{}
+	//var rd *Ready
 
 	r := n.rn.raft
 
 	lead := None
+	log.Printf("node initialization over,raft id: %s node start !\n", n.rn.raft.id)
 	for {
-		if advancec != nil {
-			readyc = nil
-		} else if n.rn.HasReady() {
-			rd = n.rn.readyWithoutAccept()
-			readyc = n.readyc
-		}
+		//if advancec != nil {
+		//	readyc = nil
+		//} else if n.rn.HasReady() {
+		//	rd = n.rn.readyWithoutAccept()
+		//	readyc = n.readyc
+		//}
 		// leader unmatched
 		if lead != r.lead {
 			// unmatched but have leader
 			if r.lead != None {
 				if lead == None {
 					// 第一轮，这个时候还没有leader
-					log.Println("raft.node: %x elected leader %x at term %d", r.id, r.lead, r.Term)
+					log.Printf("raft.node: %x elected leader %x at term %d\n", r.id, r.lead, r.Term)
 				} else {
 					//
-					log.Println("raft.node: %x changed leader from %x to %x at term %d", r.id, lead, r.lead, r.Term)
+					log.Printf("raft.node: %x changed leader from %x to %x at term %d\n", r.id, lead, r.lead, r.Term)
 				}
 				propc = n.propc
 			} else { //两个leader不相同，说明这个时候已经改变leader了
-				log.Println("raft.node: %x lost leader %x at term %d", r.id, lead, r.Term)
+				log.Printf("raft.node: %x lost leader %x at term %d\n", r.id, lead, r.Term)
 				propc = nil
 			}
 			lead = r.lead
@@ -225,13 +201,13 @@ func (n *node) run() {
 		// tick message from other node
 		case <-n.tickc:
 			n.rn.Tick()
-		case readyc <- rd:
-			n.rn.acceptReady(rd)
-			advancec = n.advancec
-		case <-advancec:
-			n.rn.Advance(rd)
-			rd = &Ready{}
-			advancec = nil
+		//case readyc <- rd:
+		//n.rn.acceptReady(rd)
+		//advancec = n.advancec
+		//case <-advancec:
+		//	n.rn.Advance(rd)
+		//	rd = &Ready{}
+		//	advancec = nil
 		case c := <-n.status:
 			c <- getStatus(r)
 		case <-n.stop:
@@ -248,14 +224,15 @@ func (n *node) Tick() {
 	case n.tickc <- struct{}{}:
 	case <-n.done:
 	default:
-		log.Println("%x A tick missed to fire. Node blocks too long!", n.rn.raft.id)
+		log.Printf("%x A tick missed to fire. Node blocks too long!\n", n.rn.raft.id)
 	}
 }
 
 // sendMessage: 开一个线程, 将msg暂存区中的数据发送出去
-func (n *node) sendMessages(sleepTime time.Duration) {
+func sendMessages(sleepTime time.Duration, n *node) {
 	// 启动一个 goroutine 来处理消息发送
 	go func() {
+		log.Printf("start sending messages go routine......\n")
 		// 创建一个互斥锁，以确保线程安全地访问暂存区
 		var mutex sync.Mutex
 		// 创建一个通道，用于通知主线程消息发送完成
@@ -273,7 +250,7 @@ func (n *node) sendMessages(sleepTime time.Duration) {
 				mutex.Unlock()
 
 				// 发送消息的逻辑
-				if err := n.sendAllCache(msg); err != nil {
+				if err := sendAllCache(msg, n); err != nil {
 					log.Printf("Error sending message: %v", err)
 					continue
 				} else {
@@ -303,27 +280,30 @@ func (n *node) sendMessages(sleepTime time.Duration) {
 	}()
 }
 
-func (n *node) sendAllCache(msgs []*pb.Message) error {
+func sendAllCache(msgs []*pb.Message, n *node) error {
 	for _, m := range msgs {
 		if m != nil {
 			// 发送消息到其他节点
-			response, err := n.client.SendMessage(m)
-			if err != nil {
-				return err
-			}
-			// 将消息放入接收通道
-			select {
-			case n.recvc <- response:
-				// 消息已成功放入通道
-			default:
-				// 通道已满，无法放入消息
-				log.Println("recvc channel is full, message dropped")
+			for _, cl := range n.client {
+				log.Printf("send msg to %d\n", m.To)
+				response, err := cl.SendMessage(m)
+				if err != nil {
+					return err
+				}
+				// 将消息放入接收通道
+				select {
+				case n.recvc <- response:
+					// 消息已成功放入通道
+				default:
+					// 通道已满，无法放入消息
+					log.Printf("recvc channel is full, message dropped")
+				}
 			}
 		}
 	}
 	return nil
 }
-func (n *node) startTicker(interval time.Duration) {
+func startTicker(interval time.Duration, n *node) {
 	go func() {
 		ticker := time.NewTicker(time.Millisecond * interval)
 		defer ticker.Stop()
@@ -338,12 +318,14 @@ func (n *node) startTicker(interval time.Duration) {
 				return
 			}
 		}
+		log.Printf("start ticker go routine......\n")
 	}()
 }
 
 func (c *RaftClient) Close() error {
 	return c.conn.Close()
 }
+
 func (c *RaftClient) SendMessage(msg *pb.Message) (*pb.Message, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
