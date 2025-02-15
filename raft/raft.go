@@ -295,11 +295,9 @@ func stepLeader(r *raft, msg *pb.Message) error {
 	case pb.MessageType_MsgProp:
 		// 处理 MsgProp 类型的消: 确保提案的正确性和合法性，并将日志条目追加到 Raft 日志中
 		pr := r.processTracker.Progress[msg.To]
-
 		if len(msg.Entries) == 0 {
 			log.Fatalf("%x stepped empty MsgProp\n", r.id)
 		}
-
 		if r.processTracker.Progress[r.id] == nil {
 			return ErrProposalDropped
 		}
@@ -308,7 +306,6 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		}
 		// broadcast append msg
 		r.bcastAppend()
-
 		switch msg.Type {
 		case pb.MessageType_MsgAppResp:
 			pr.RecentActive = true
@@ -685,7 +682,7 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	// 封装消息数据
 	m.Type = pb.MessageType_MsgApp
 	m.Index = pr.Next - 1
-	m.Term = term
+	m.LogTerm = term
 	m.Entries = entries
 	m.Commit = r.raftLog.committed
 	if n := len(m.Entries); n != 0 {
