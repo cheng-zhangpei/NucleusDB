@@ -890,7 +890,7 @@ todo:  现在所提供的压缩的方法只是一个初步版本，其实还有�
 由于这个数据库是在云原生环境下对智能体的记忆进行存储，所以单机的数据库是无法满足未来可能有的生产环境的。所以此处使用raft共识算法将ComDB从单机的kv数据库改造为分布式的kv数据库。下面先实现比较基础的raft基础功能，如动态配置变更、snapshot、以及预防brain-split的措施（预投票等）此处先不进行实现。raft共识算法论文：[raft算法]: https://raft.github.io/raft.pdf 分布式改造源码参考为etcd（认真的看了一下源码大概知道etcd的raft改造架构，所以后面实现的架构其实是etcd共识模块的简化）
 
 实现架构如图：
-
+![](../image/raftNode.png)
 
 
 #### raft实现架构
@@ -898,15 +898,15 @@ todo:  现在所提供的压缩的方法只是一个初步版本，其实还有�
 在架构中，raft结构式raft共识算法的核心，在raft的方法中对不同状态机对于不同信息的handle方式进行了分类实现，其中Progress结构记录了该节点的运行状态现阶段主要是在日志冲突检测时起作用，用于区分follower是否处于冲突探测状态，而ProgressTracker则是让leader可以获得集群中所有Follower的运行信息而设计的。rawnode是对raft实现功能的线程不安全的封装，message buffer算是用于暂存raft需要发送的信息，信息的发送由另外一个go routine以固定间隔发送数据。在架构中有四个通道：recevc是从网络层接受信息的通道，接受到的信息会经过r.Step()被分发到不同的处理函数。tickc: 用户传输逻辑时钟触发器所发送的时钟信号。syncc：持久化信号通道，applyc：状态机应用状态通道（这里的应用指的是Set之类的方法应用到DB本身）
 
 状态机转化流程
-
+![](../image/changeState.png)
 
 
 - Leader Election: node初始化的时候都是follower状态，每一个节点会维护一个ElectionTimeout，随机初始化为150 ~ 300ms。如果在这段时间内没有收到leader的心跳信息或者是appendEntry信息，就会转化状态机为candidate。candidate会向follower广播VoteRequest，如果他接受到多数节点的VoteResponse，就会转化为Leader。逻辑不会很难，但是coding就会比较麻烦......
 - AppendEntry：大体的流程就是leader接受到set、get之类的信息之后会先将信息放到raftlog的ent[]暂存区里面，在接受到AppendEntryResponse之后Leader会apply对应的日志，并且修改自身的progress、raftlog中的apply信息。注意一下在这个过程中状态机维护的两个状态指针，committed指针指向最新的已经持久化的日志，applied指针指向已经应用到状态机的最新日志。在持久化之后才会applied，因为异步的原因，所以也不一定有强制的先后。leader先发送AppendEntry，Follower收到之后就将数据持久化也就是commit，如果超过一半的节点发送了reponse，Leader才会进行committed。我的设计是Commited和Apply是异步开的，所以几乎就是同时进行的。
 
 #### 消息机制
-
 具体的消息分发我不是在网络层进行的，所有的消息都是通过统一的channel进入节点的，因为我这里采用了一个不太好的策略就是所有的消息都是广播....所以在网络不太好的情况下会网络拥堵....  message的信息被封装在proto文件中，并使用反编译器生成对应的go语言代码。消息的携带信息：
+![](../image/raftMessge.png)
 
     message Message {
       MessageType type = 1;
