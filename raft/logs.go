@@ -37,6 +37,7 @@ func newLogWithSize(storage Storage, maxNextEntsSize uint64) *raftLog {
 	// Initialize our committed and applied pointers to the time of the last compaction.
 	log.committed = firstIndex - 1
 	log.applied = firstIndex - 1
+
 	return log
 }
 
@@ -123,7 +124,7 @@ func (l *raftLog) lastTerm() uint64 {
 	}
 	return t
 }
-func (l *raftLog) findConflictByTerm(index uint64, term uint64) uint64 {
+func (l *raftLog) findConflictByTerm(index uint64, logTerm uint64) uint64 {
 	if li := l.lastIndex(); index > li {
 		// NB: such calls should not exist, but since there is a straightfoward
 		// way to recover, do it.
@@ -137,8 +138,9 @@ func (l *raftLog) findConflictByTerm(index uint64, term uint64) uint64 {
 		return index
 	}
 	for {
-		logTerm, err := l.term(index)
-		if logTerm <= term || err != nil {
+		term, err := l.term(index)
+		// logterm is larger than the term. Index --
+		if term <= logTerm || err != nil {
 			break
 		}
 		index--

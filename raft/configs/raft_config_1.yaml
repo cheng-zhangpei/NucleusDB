@@ -13,3 +13,4 @@ grpc_client_addr:  # 其他节点的 gRPC 地址列表
   - 127.0.0.1:5002
   - 127.0.0.1:5003
 tick_interval: 500  # Tick 间隔（时间格式，如 500ms、1s）
+http_server_addr: "0.0.0.0:8080"

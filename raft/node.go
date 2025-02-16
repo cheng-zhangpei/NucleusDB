@@ -1,24 +1,38 @@
 package raft
 
 import (
+	"ComDB"
 	"ComDB/raft/pb"
 	"ComDB/raft/tracker"
 	"context"
+	"encoding/json"
 	"google.golang.org/grpc"
 	"log"
 	"net"
+	"net/http"
+	"os"
 	"sync"
 	"time"
 )
 
-// Node the bridge of application(ComDB) and raft module
-type Node interface {
+type msgWithResult struct {
+	entryDetails []byte
+	httpType     HttpType
+}
+type HttpType int
+
+const (
+	// 定义 HTTP 类型的枚举值
+	HttpTypeDelete HttpType = iota // iota 自动生成 0
+	HttpTypePut                    // iota 自动生成 2
+)
+
+// 定义一个映射表，用于存储枚举值的描述
+var httpTypeDescriptions = map[HttpType]string{
+	HttpTypeDelete: "HTTP Delete 请求",
+	HttpTypePut:    "HTTP PUT 请求",
 }
 
-type msgWithResult struct {
-	m      *pb.Message
-	result chan error
-}
 type Status struct {
 	BaseStatus
 	Progress map[uint64]tracker.Progress
@@ -44,6 +58,8 @@ type node struct {
 	rn *RawNode
 	// use it for send message
 	client []*RaftClient
+	// DB instance
+	DB *ComDB.DB
 }
 
 type raftServer struct {
@@ -81,7 +97,7 @@ func (s *raftServer) ProcessMessage(ctx context.Context, msg *pb.Message) (*pb.M
 	return &pb.Message{}, nil
 }
 
-func StartNode(c *RaftConfig) Node {
+func StartNode(c *RaftConfig) {
 	rn, err := NewRawNode(c)
 	if err != nil {
 		panic(err)
@@ -97,11 +113,11 @@ func StartNode(c *RaftConfig) Node {
 	sendMessages(c.SendInterval, n)
 	// 开启接受消息主进程
 	startTicker(c.TickInterval, n)
+	// start a thread to create a httpserver to trigger the raft module
+	go startRaftHttpServer(n, c.HttpServerAddr)
 	go run(n)
-	return &n
 }
 func registerRPCServer(n *node, addr string) {
-
 	s := grpc.NewServer()
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -118,6 +134,13 @@ func registerRPCServer(n *node, addr string) {
 }
 
 func newNode(rn *RawNode, config *RaftConfig) *node {
+	opts := ComDB.DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go")
+	opts.DirPath = dir
+	db, err := ComDB.Open(opts)
+	if err != nil {
+		panic(err)
+	}
 	return &node{
 		propc:    make(chan *msgWithResult),
 		recvc:    make(chan *pb.Message),
@@ -132,6 +155,7 @@ func newNode(rn *RawNode, config *RaftConfig) *node {
 		status: make(chan chan *BaseStatus),
 		rn:     rn,
 		client: NewRaftClient(config.GRPCClientAddr, config.GRPCServerAddr),
+		DB:     db,
 	}
 }
 
@@ -185,12 +209,20 @@ func run(n *node) {
 
 		select {
 		case pm := <-propc:
-			m := pm.m
-			m.From = r.id
-			err := r.Step(m)
-			if pm.result != nil {
-				pm.result <- err
-				close(pm.result)
+			// 这里会来delete请求和写请求
+			if r.state != StateLeader {
+				// 非 Leader 节点拒绝写请求
+				continue
+			}
+			// 构造日志条目
+			ent := pb.Entry{
+				Term:  r.Term,
+				Index: r.raftLog.lastIndex() + 1,
+				Data:  pm.entryDetails,
+			}
+			// 追加到 Leader 日志
+			if r.appendEntry(ent) {
+				r.bcastAppend() // 广播给其他节点
 			}
 		// response from other raft node
 		case m := <-n.recvc:
@@ -330,4 +362,98 @@ func (c *RaftClient) SendMessage(msg *pb.Message) (*pb.Message, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	return c.rpc.SendMessage(ctx, msg)
+}
+
+// 1. put  2. delete  3. get
+func (n *node) handleRaftPut(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var kv map[string]string
+
+	if err := json.NewDecoder(request.Body).Decode(&kv); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		log.Printf("Failed to decode request body: %v\n", err)
+		return
+	}
+	// only leader can put message
+	if n.rn.raft.state != StateLeader {
+		return
+	}
+	for key, value := range kv {
+		var logData = []byte("PUT " + key + " " + value)
+		msg := &msgWithResult{
+			entryDetails: logData,
+			httpType:     HttpTypePut,
+		}
+		n.propc <- msg
+		log.Printf("Key-value pair inserted successfully: key=%s, value=%s\n", key, value)
+	}
+
+}
+
+// get
+func (n *node) handleRaftGet(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := request.URL.Query().Get("key")
+	log.Printf("Received GET request for key: %s\n", key)
+
+	value, err := n.DB.Get([]byte(key))
+	if err != nil && err != ComDB.ErrKeyNotFound {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		log.Printf("Failed to get value for key: key=%s, error=%v\n", key, err)
+		return
+	}
+
+	if err == ComDB.ErrKeyNotFound {
+		log.Printf("Key not found: key=%s\n", key)
+	} else {
+		log.Printf("Successfully retrieved value for key: key=%s, value=%s\n", key, string(value))
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(string(value))
+}
+
+func (n *node) handleRaftDelete(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodDelete {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := request.URL.Query().Get("key")
+	if key == "" {
+		http.Error(writer, "Key is required", http.StatusBadRequest)
+		log.Println("Failed to delete: key is missing")
+		return
+	}
+
+	log.Printf("Received DELETE request for key: %s\n", key)
+	var logData = []byte("DELETE " + key)
+	msg := &msgWithResult{
+		entryDetails: logData,
+		httpType:     HttpTypeDelete,
+	}
+	n.propc <- msg
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte("Key deleted successfully"))
+}
+
+// compiler seem have some problems
+func startRaftHttpServer(n *node, addr string) {
+	http.HandleFunc("/raft/put", n.handleRaftPut)
+	http.HandleFunc("/raft/get", n.handleRaftGet)
+	http.HandleFunc("/raft/delete", n.handleRaftDelete)
+
+	// 启动 HTTP 服务器
+	log.Printf("Starting Raft HTTP server on :%s\n", addr)
+	if err := http.ListenAndServe(addr, nil); err != nil {
+		log.Fatalf("Failed to start HTTP server: %v", err)
+	}
 }

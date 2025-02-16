@@ -66,6 +66,7 @@ type RaftConfig struct {
 	GRPCServerAddr            string        `yaml:"grpc_server_addr"`
 	GRPCClientAddr            []string      `yaml:"grpc_client_addr"`
 	TickInterval              time.Duration `yaml:"tick_interval"`
+	HttpServerAddr            string        `yaml:"http_server_addr"`
 }
 
 // validate raft config validation
