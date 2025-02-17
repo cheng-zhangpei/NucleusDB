@@ -15,6 +15,15 @@ type Inflights struct {
 	buffer []uint64
 }
 
+func newInflights(maxSize int) *Inflights {
+	return &Inflights{
+		start:  0,                       // 初始时起始索引为 0
+		count:  0,                       // 初始时缓冲区中没有 inflights
+		size:   maxSize,                 // 设置缓冲区的最大大小
+		buffer: make([]uint64, maxSize), // 初始化缓冲区
+	}
+}
+
 // Full returns true if no more messages can be sent at the moment.
 func (in *Inflights) Full() bool {
 	return in.count == in.size

@@ -67,6 +67,8 @@ type RaftConfig struct {
 	GRPCClientAddr            []string      `yaml:"grpc_client_addr"`
 	TickInterval              time.Duration `yaml:"tick_interval"`
 	HttpServerAddr            string        `yaml:"http_server_addr"`
+	InflghtsMaxSize           int           `yaml:"inflghts_max_size"`
+	// todo 补充数据库相关的配置 => 这个项目会使得配置项非常长，现在我终于有一种做非常庞大项目的感觉了....
 }
 
 // validate raft config validation
@@ -96,6 +98,10 @@ type raft struct {
 	Term uint64
 	// the node you vote for
 	Vote uint64
+	// 用于标识candidate是否已经发送了投票数据
+	voted bool
+	// 用于标识candidate重新投票的间隔，只有达到了这个间隔才会发生重新投票，暂定为ElectionTimeout的十倍
+	votedExpire uint64
 	// lead current leader
 	lead uint64
 	// raft log information
@@ -106,8 +112,6 @@ type raft struct {
 	state StateType
 	// the message info: compile by protobuf
 	msgs []*pb.Message
-	// record if the peer vote
-	votes []bool
 	// electionElapsed the interval of election
 	electionElapsed uint64
 	// heartbeatElapsed heartbeat interval
@@ -115,16 +119,15 @@ type raft struct {
 	pendingConfIndex uint64
 	uncommittedSize  uint64
 	//prs tracker.ProgressTracker
-	checkQuorum               bool
-	randomizedElectionTimeout int
-	maxMsgSize                uint64
-	maxUncommittedSize        uint64
-	electionTimeout           int
-	heartbeatTimeout          uint64
+	checkQuorum        bool
+	maxMsgSize         uint64
+	maxUncommittedSize uint64
+	electionTimeout    int
+	heartbeatTimeout   uint64
 	// to trigger different function like heartbeat or election
 	tick           func()
 	step           stepFunc
-	processTracker tracker.ProgressTracker
+	processTracker *tracker.ProgressTracker
 	status         BaseStatus
 }
 
@@ -141,47 +144,68 @@ func newRaft(config *RaftConfig) *raft {
 	//if err != nil {
 	//	panic(err)
 	//}
+	electionTimeout := configElectionTimeout(config.TickInterval)
+	heartbeatTimeout := configHeartbeatTimeout(time.Duration(electionTimeout), config.TickInterval)
 
 	r := &raft{
-		id:                 config.ID,
-		lead:               None,
+		id: config.ID,
+
+		lead:               0,
 		raftLog:            raftlog,
 		ms:                 ms,
 		readOnly:           newReadOnly(ReadOnlySafe),
 		maxMsgSize:         config.MaxSizePerMsg,
 		maxUncommittedSize: config.MaxUncommittedEntriesSize,
-		//prs:                       tracker.MakeProgressTracker(c.MaxInflightMsgs),
-		electionTimeout:  int(config.ElectionTick),
-		heartbeatTimeout: config.HeartbeatTick,
-		checkQuorum:      config.CheckQuorum,
+		voted:              false,
+		votedExpire:        uint64(electionTimeout * 10),
+		msgs:               make([]*pb.Message, 0),
+		electionTimeout:    electionTimeout,
+		heartbeatTimeout:   uint64(heartbeatTimeout),
+		checkQuorum:        config.CheckQuorum,
 	}
-
-	//cfg, prs, err := confchange.Restore(confchange.Changer{
-	//	Tracker:   r.prs,
-	//	LastIndex: raftlog.lastIndex(),
-	//}, cs)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//assertConfStatesEquivalent(r.logger, cs, r.switchToConfig(cfg, prs))
-	//
-	//if !IsEmptyHardState(hs) {
-	//	r.loadState(hs)
-	//}
+	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
+	// 需要对processTracker进行初始化
+	for i := 1; i <= len(config.GRPCClientAddr); i++ {
+		r.processTracker.Votes[uint64(i)] = false // 偶数键为 false，奇数键为 true
+	}
+	// 初始化progressMap，如果不初始化无法进行心跳,因为每一个node都有可能变为Leader所以在初始化的时候都要进行创建
+	// tou ge lan hhhh
+	for i := 1; i <= len(config.GRPCClientAddr); i++ {
+		// 新建每个节点的Progress
+		progress := tracker.NewProgress(config.InflghtsMaxSize)
+		r.processTracker.Progress[uint64(i)] = progress
+	}
+	// todo 在状态机中加载已经应用的数据,这里还是需要区分暂存区的日志index与全局日志的index,已经应用的信息往
+	// todo 往已经从暂存区中删除了
 	//if c.Applied > 0 {
 	//	raftlog.appliedTo(c.Applied)
 	//}
-
-	//r.becomeFollower(r.Term, None)
-
-	//var nodesStrs []string
-	//for _, n := range r.prs.VoterNodes() {
-	//	nodesStrs = append(nodesStrs, fmt.Sprintf("%x", n))
-	//}
-
-	//log.Printf("newRaft %x [peers: [%s], term: %d, commit: %d, applied: %d]",
-	//	r.id, strings.Join(nodesStrs, ","), r.Term, r.raftLog.committed, r.raftLog.applied)
+	// 在初始化的时候节点只能是Follower
+	r.becomeFollower(r.Term, None)
 	return r
+}
+func configElectionTimeout(interval time.Duration) int {
+	var time_up time.Duration = 300
+	var time_lo time.Duration = 150
+	up_bo := int(time_up / interval)
+	lo_bo := int(time_lo / interval)
+	// 生成一个介于 lo_bo 和 uep_bo 之间的随机数
+	randomNum := rand.Intn(up_bo-lo_bo+1) + lo_bo
+	//log.Printf("generate electionTimeout %d, interval %d\n", randomNum, interval)
+	return randomNum
+}
+
+// configHeartbeatTimeout 根据选举超时计算心跳超时
+func configHeartbeatTimeout(electionTimeout time.Duration, interval time.Duration) (heartbeatTimeout time.Duration) {
+	// 设置心跳超时的最小值（例如 3 个 Tick）
+	minHeartbeatTimeout := 3
+
+	// 心跳超时通常是选举超时的 1/10，但不能小于最小值
+	heartbeatTimeout = electionTimeout / 10
+	if heartbeatTimeout < time.Duration(minHeartbeatTimeout) {
+		heartbeatTimeout = time.Duration(minHeartbeatTimeout)
+	}
+	return heartbeatTimeout
 }
 
 // reset Reset the state of the raft instance
@@ -212,7 +236,6 @@ func (r *raft) tickElection() {
 	r.electionElapsed++ // so this is not use tick of sys to count heartBeat
 
 	if r.pastElectionTimeout() {
-		r.electionElapsed = 0
 		var msgType pb.MessageType = pb.MessageType_MsgHup
 		if err := r.Step(&pb.Message{From: r.id, Type: msgType}); err != nil {
 			log.Printf("error occurred during election: %v\n", err)
@@ -309,6 +332,7 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		r.bcastAppend()
 		switch msg.Type {
 		case pb.MessageType_MsgAppResp:
+
 			pr.RecentActive = true
 			if msg.Reject {
 				log.Printf("%x received MsgAppResp(rejected, hint: (index %d, term %d)) from %x for index %d\n",
@@ -485,6 +509,7 @@ func (r *raft) Step(msg *pb.Message) error {
 		switch msg.Type {
 		// 如果是投票请求消息，将当前节点转变为跟随者，领导者 ID 设置为 None
 		case pb.MessageType_MsgVote:
+			log.Printf("Raft Node %d get vote request from node %d", r.id, msg.From)
 			r.becomeFollower(msg.Term, None)
 		// 对于其他消息类型，将当前节点转变为跟随者，并更新领导者 ID 为消息发送者 ID
 		default:
@@ -495,6 +520,7 @@ func (r *raft) Step(msg *pb.Message) error {
 	switch msg.Type {
 	// MsgHup：触发选举流程
 	case pb.MessageType_MsgHup:
+		// 在这里会不断触发选举，所以在start之后一次就要停住了
 		r.startElection(msg)
 	// MsgVote：处理投票请求
 	case pb.MessageType_MsgVote:
@@ -510,7 +536,7 @@ func (r *raft) Step(msg *pb.Message) error {
 	return nil
 }
 
-// =======================================================================handle different message ==============================================
+// ==================================handle different message =============================
 // startElection触发选举流程，使当前节点转变为候选者并开始新的选举。
 // only candidate
 func (r *raft) startElection(msg *pb.Message) {
@@ -518,11 +544,13 @@ func (r *raft) startElection(msg *pb.Message) {
 		log.Printf("the node already is leader")
 		return
 	}
-	r.becomeCandidate()
-	// vote self
-	r.votes[r.id] = true
-	// send vote request
-	r.sendVoteRequests()
+	// 这些条件的限制是为了避免节点反复的发生状态的转化而导致资源浪费
+	if (r.voted == false) || (r.voted == true && r.electionElapsed == r.votedExpire) {
+		r.becomeCandidate()
+		r.processTracker.Votes[r.id] = true
+		r.electionElapsed = 0
+		r.sendVoteRequests()
+	}
 	// judge if the candidate can be the leader
 }
 
@@ -532,9 +560,11 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 		log.Printf("leader can not handle the vote request")
 		return
 	}
+	// 如果拿到了投票的请求就别再继续选拔了，但是也不用转成follower，candidate也可以去投票
+	r.electionElapsed = 0
 	// two factor: 1. the node receive the msg that it has voted. 2. do not vote yet
-	canVote := r.Vote == msg.From ||
-		(r.Vote == None && r.lead == None)
+	// 真的忍不住想要吐槽，vote和leader被初始化为0了，我就说为啥会疯狂被拒绝.....
+	canVote := r.Vote == 0 && r.lead == 0
 	//if canVote && r.raftLog.isUpToDate(m.Index, m.LogTerm) { // judge if the candidate have the qualification to ask for vote
 	//
 	//}
@@ -554,14 +584,12 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 		var reject = true
 		r.send(&pb.Message{To: msg.From, Term: r.Term, Type: msgType, Reject: reject})
 	}
-
 }
 
 // handleVoteResponse 处理投票响应消息，更新投票状态并检查是否当选。execute by leader
 func (r *raft) handleVoteResponse(msg *pb.Message) {
 	// update the value
-	r.votes[msg.From] = true
-
+	r.processTracker.Votes[msg.From] = true
 	if r.poll(r.id, true) == true {
 		r.becomeLeader()
 		return
@@ -588,11 +616,11 @@ func (r *raft) send(msg *pb.Message) {
 
 func (r *raft) poll(id uint64, voteGranted bool) bool {
 	// 记录投票
-	r.votes[id] = voteGranted
+	r.processTracker.Votes[id] = voteGranted
 
 	// 更新投票状态
 	granted, rejected := 0, 0
-	for _, voted := range r.votes {
+	for _, voted := range r.processTracker.Votes {
 		if voted {
 			granted++
 		} else {
@@ -601,10 +629,10 @@ func (r *raft) poll(id uint64, voteGranted bool) bool {
 	}
 
 	// 判断是否赢得多数票
-	if granted > len(r.votes)/2 {
+	if granted > len(r.processTracker.Votes)/2 {
 		log.Printf("%x won the election with %d votes\n", r.id, granted)
 		return true
-	} else if rejected > len(r.votes)/2 {
+	} else if rejected > len(r.processTracker.Votes)/2 {
 		log.Printf("%x lost the election with %d votes\n", r.id, rejected)
 		return false
 	}
@@ -745,7 +773,22 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 //}
 
 func (r *raft) resetRandomizedElectionTimeout() {
-	r.randomizedElectionTimeout = r.electionTimeout + globalRand.Intn(r.electionTimeout)
+	// 使用当前时间作为随机数生成器的种子
+	rand.Seed(uint64(time.Now().UnixNano()))
+
+	// 定义随机偏移量的范围为选举超时时间的 50%
+	maxOffset := r.electionTimeout / 2
+
+	// 确保 maxOffset 是正数
+	if maxOffset <= 0 {
+		maxOffset = 1
+	}
+
+	// 生成随机偏移量
+	randomOffset := time.Duration(rand.Int63n(int64(maxOffset)))
+
+	// 设置随机化的选举超时时间
+	r.electionTimeout = int(r.electionTimeout + int(randomOffset))
 }
 
 // Intn we should ensure the generation of random election timeout atomic
@@ -756,13 +799,9 @@ func (r *lockedRand) Intn(n int) int {
 	return v
 }
 func (r *raft) pastElectionTimeout() bool {
-	return r.electionElapsed >= uint64(r.randomizedElectionTimeout)
+	return r.electionElapsed >= uint64(r.electionTimeout)
 }
 
-//	func (r *raft) advance(rd *Ready) {
-//		// 处理已提交的日志条目
-//		r.reduceUncommittedSize(rd.CommittedEntries)
-//	}
 func (l *raftLog) term(i uint64) (uint64, error) {
 	// the valid term range is [index of dummy entry, last index]
 	dummyIndex := l.firstIndex() - 1

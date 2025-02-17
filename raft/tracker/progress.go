@@ -16,6 +16,18 @@ type Progress struct {
 	ElectionReset    bool      // 标记选举超时计时器是否已被重置
 }
 
+func NewProgress(maxFlightSize int) *Progress {
+	return &Progress{
+		Match:            0,                           // 初始时没有匹配的日志条目
+		Next:             1,                           // 初始时下一个要发送的日志条目索引
+		RecentActive:     false,                       // 初始时节点不活跃
+		ProbeSent:        false,                       // 初始时未发送探测消息
+		UncertainMessage: newInflights(maxFlightSize), // 初始时没有不确定的消息
+		State:            StateReplicate,              // 初始状态为未冲突
+		ElectionReset:    false,                       // 初始时选举超时计时器未被重置
+	}
+}
+
 // BecomeProbe transitions into StateProbe. Next is reset to Match+1 or,
 // optionally and if larger, the index of the pending snapshot.
 func (pr *Progress) BecomeProbe() {
