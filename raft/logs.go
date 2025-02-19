@@ -2,6 +2,7 @@ package raft
 
 import (
 	"ComDB/raft/pb"
+	"fmt"
 	"log"
 )
 
@@ -11,7 +12,6 @@ type raftLog struct {
 	storage   Storage
 	committed uint64
 	applied   uint64
-	ms        *MemoryStorage
 	// maxNextEntsSize is the maximum number aggregate byte size of the messages
 	// returned from calls to nextEnts.
 	maxNextEntsSize uint64
@@ -24,20 +24,18 @@ func newLogWithSize(storage Storage, maxNextEntsSize uint64) *raftLog {
 	log := &raftLog{
 		storage:         storage,
 		maxNextEntsSize: maxNextEntsSize,
+		committed:       0,
+		applied:         0,
 	}
 
 	firstIndex, err := storage.FirstIndex()
 	if err != nil {
 		panic(err)
 	}
-	_, err = storage.LastIndex()
-	if err != nil {
-		panic(err)
-	}
-	// Initialize our committed and applied pointers to the time of the last compaction.
-	log.committed = firstIndex - 1
-	log.applied = firstIndex - 1
-
+	//lastIndex := storage.LastIndex()
+	// 这里小心一点，别溢出了，index在这个系统里面是从0开始的无符号数
+	log.committed = firstIndex
+	log.applied = firstIndex
 	return log
 }
 
@@ -73,9 +71,8 @@ func (l *raftLog) slice(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
 		return nil, nil
 	}
 	var ents []*pb.Entry
-	// 直接从存储中读取 lo 到 hi 的条目，不考虑 unstable 的 offset
-	// todo we just read log from memory,sync module do not finished yet
-	storedEnts, err := l.storage.Entries(lo, hi, maxSize)
+
+	storedEnts, err := l.storage.Entries(lo, hi)
 	if err == ErrCompacted {
 		return nil, err
 	} else if err == ErrUnavailable {
@@ -110,15 +107,12 @@ func (l *raftLog) mustCheckOutOfBounds(lo, hi uint64) error {
 }
 
 func (l *raftLog) lastIndex() uint64 {
-	i, err := l.storage.LastIndex()
-	if err != nil {
-		panic(err) // TODO(bdarnell)
-	}
+	i := l.storage.LastIndex()
 	return i
 }
 
 func (l *raftLog) lastTerm() uint64 {
-	t, err := l.term(l.lastIndex())
+	t, err := l.storage.Term(l.lastIndex())
 	if err != nil {
 		log.Fatalln("unexpected error when getting the last term")
 	}
@@ -138,7 +132,7 @@ func (l *raftLog) findConflictByTerm(index uint64, logTerm uint64) uint64 {
 		return index
 	}
 	for {
-		term, err := l.term(index)
+		term, err := l.storage.Term(index)
 		// logterm is larger than the term. Index --
 		if term <= logTerm || err != nil {
 			break
@@ -150,24 +144,31 @@ func (l *raftLog) findConflictByTerm(index uint64, logTerm uint64) uint64 {
 func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 	logTerm := msg.LogTerm
 	index := msg.Index
-	//
-	if l.matchIndex(index, logTerm) {
+	if l.matchIndex(index, logTerm) || l.isEntriesEmpty() {
+		FollowerEnts, err := l.storage.GetEntries()
+		if err != nil {
+			panic(err)
+		}
 		// leader and follower have the same entry in this index
-		newIndex := l.ms.lastIndex() + uint64(len(msg.Entries))
+		// lastIndex, err := l.storage.LastIndex()
+		newIndex := l.storage.LastIndex() + uint64(len(msg.Entries))
 		// 就这现在最新的位置往前找冲突
 		conflict := l.findConflict(msg.Entries)
 		switch {
-		case conflict == 0:
+		case conflict == 0: // 需要直接把新的日志内容丢进去是吗？
 		case conflict <= l.committed:
 			log.Fatalf("entry %d conflict with committed entry [committed(%d)]\n", conflict, l.committed)
 		default:
-			offset := index + 1
-			err := l.ms.Append(msg.Entries[conflict-offset:])
-			if err != nil {
-				return 0, false
+			// 此处将follower的entries给打印出来看一眼
+			for _, entry := range FollowerEnts {
+				fmt.Println(entry)
 			}
+			// 计算冲突后需要追加的日志条目起始索引
+			start := max(conflict-index, 0)
+			// 追加从冲突点开始的日志条目
+			_ = l.storage.Append(msg.Entries[start:])
 		}
-		// update commited field in raftLog
+		// update commited field in raftLog，这里要判断好提交信息是否合法
 		l.commitTo(min(msg.Commit, newIndex))
 		return newIndex, true
 	}
@@ -176,14 +177,15 @@ func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 func (l *raftLog) commitTo(tocommit uint64) {
 	// never decrease commit
 	if l.committed < tocommit {
-		if l.lastIndex() < tocommit {
+		// 所以这就是一开始不统一index的第一个元素下标的后果
+		if l.lastIndex() <= tocommit {
 			log.Fatalf("tocommit(%d) is out of range [lastIndex(%d)]. Was the raft log corrupted, truncated, or lost?\n", tocommit, l.lastIndex())
 		}
 		l.committed = tocommit
 	}
 }
 func (l *raftLog) matchIndex(index uint64, term uint64) bool {
-	msIndex, err := l.ms.Term(index)
+	msIndex, err := l.storage.Term(index)
 	if err != nil {
 		return false
 	} else {
@@ -192,22 +194,42 @@ func (l *raftLog) matchIndex(index uint64, term uint64) bool {
 }
 
 func (l *raftLog) findConflict(ents []*pb.Entry) uint64 {
+	// 为了实时观察follower的变化这个地方再加上follower的logEntry的内容
+	entries, err := l.storage.GetEntries()
+	if err != nil {
+		panic(err)
+	}
+	for _, entry := range entries {
+		fmt.Println(entry)
+	}
 	for _, ne := range ents {
-		if !l.ms.matchTerm(ne.Index, ne.Term) {
-			if ne.Index <= l.ms.lastIndex() {
+		if !l.storage.matchTerm(ne.Index, ne.Term) {
+			if ne.Index <= l.storage.LastIndex() {
 				log.Printf("found conflict at index %d [conflicting term: %d]\n",
 					ne.Index, ne.Term)
 			}
-			return ne.Index
+			// ne 是来自外部的消息，一开始index肯定是0
+			// 真实的index是需要小一个的
+			return ne.Index - 1
 		}
 	}
 	return 0
 }
+func (l *raftLog) maybeCommit(maxIndex, term uint64) bool {
+	if maxIndex > l.committed {
+		l.commitTo(maxIndex)
+		return true
+	}
+	return false
+}
 
-func (ms *MemoryStorage) matchTerm(i, term uint64) bool {
-	t, err := ms.Term(i)
+func (l *raftLog) isEntriesEmpty() bool {
+	entries, err := l.storage.GetEntries()
 	if err != nil {
 		return false
 	}
-	return t == term
+	if len(entries) == 0 {
+		return true
+	}
+	return entries[0] == nil
 }

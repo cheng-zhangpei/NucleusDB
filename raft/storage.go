@@ -30,20 +30,23 @@ type Storage interface {
 	// Entries returns a slice of log entries in the range [lo,hi).
 	// MaxSize limits the total size of the log entries returned, but
 	// Entries returns at least one entry if any.
-	Entries(lo, hi, maxSize uint64) ([]*pb.Entry, error)
+	Entries(lo, hi uint64) ([]*pb.Entry, error)
+	GetEntries() ([]*pb.Entry, error)
 	// Term returns the term of entry i, which must be in the range
 	// [FirstIndex()-1, LastIndex()]. The term of the entry before
 	// FirstIndex is retained for matching purposes even though the
 	// rest of that entry may not be available.
 	Term(i uint64) (uint64, error)
 	// LastIndex returns the index of the last entry in the log.
-	LastIndex() (uint64, error)
+	LastIndex() uint64
 	// FirstIndex returns the index of the first log entry that is
 	// possibly available via Entries (older entries have been incorporated
 	// into the latest Snapshot; if storage only contains the dummy entry the
 	// first log entry is not available).
 	FirstIndex() (uint64, error)
-	// sync the entries by thread (async)
+	// Append entry to MemoStorage
+	Append(entries []*pb.Entry) int64
+	matchTerm(i, term uint64) bool
 }
 type MemoryStorage struct {
 	// Protects access to all fields. Most methods of MemoryStorage are
@@ -55,12 +58,23 @@ type MemoryStorage struct {
 	ents      []*pb.Entry
 }
 
+func (ms *MemoryStorage) matchTerm(i, term uint64) bool {
+	t, err := ms.Term(i)
+	if err != nil {
+		return false
+	}
+	return t == term
+}
+
 // NewMemoryStorage creates an empty MemoryStorage.
 func NewMemoryStorage() (*MemoryStorage, error) {
 	return &MemoryStorage{
 		// When starting from scratch populate the list with a dummy entry at term zero.
-		ents: make([]*pb.Entry, 1),
+		ents: make([]*pb.Entry, 0),
 	}, nil
+}
+func (ms *MemoryStorage) GetEntries() ([]*pb.Entry, error) {
+	return ms.ents, nil
 }
 
 // InitialState implements the Storage interface.
@@ -77,7 +91,7 @@ func (ms *MemoryStorage) SetHardState(st HardState) error {
 }
 
 // Entries implements the Storage interface.
-func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
+func (ms *MemoryStorage) Entries(lo, hi uint64) ([]*pb.Entry, error) {
 	ms.Lock()
 	defer ms.Unlock()
 	// remeber ents is a cache area,Index is the global pos of the Entry including the entries saved in the DB
@@ -101,7 +115,14 @@ func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]*pb.Entry, error) {
 func (ms *MemoryStorage) Term(i uint64) (uint64, error) {
 	ms.Lock()
 	defer ms.Unlock()
+	if len(ms.ents) == 0 {
+		return 0, nil
+	}
 	offset := ms.ents[0].Index
+	if len(ms.ents) == 0 {
+		// 任期是0就说明还没有开始投票
+		return 0, nil
+	}
 	if i < offset {
 		return 0, ErrCompacted
 	}
@@ -112,16 +133,20 @@ func (ms *MemoryStorage) Term(i uint64) (uint64, error) {
 }
 
 // LastIndex implements the Storage interface.
-func (ms *MemoryStorage) LastIndex() (uint64, error) {
+func (ms *MemoryStorage) LastIndex() uint64 {
 	ms.Lock()
 	defer ms.Unlock()
-	return ms.lastIndex(), nil
+	return ms.lastIndex()
 }
 
 // *ms.ents[0].Index is the log entry first pos in the global log entry
 func (ms *MemoryStorage) lastIndex() uint64 {
-	if ms.ents[0] == nil {
+
+	if len(ms.ents) == 0 {
 		return 0
+	}
+	if ms.ents[0] == nil {
+		return uint64(len(ms.ents))
 	}
 	return ms.ents[0].Index + uint64(len(ms.ents)) - 1
 }
@@ -134,8 +159,7 @@ func (ms *MemoryStorage) FirstIndex() (uint64, error) {
 }
 
 func (ms *MemoryStorage) firstIndex() uint64 {
-	if ms.ents[0] != nil {
-
+	if len(ms.ents) != 0 {
 		return ms.ents[0].Index + 1
 	} else {
 		return 0
@@ -217,9 +241,9 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 
 // Append the new entries to storage.
 // entries[0].Index > ms.entries[0].Index -> entries is a series of log Entry that want to save into tha WAL
-func (ms *MemoryStorage) Append(entries []*pb.Entry) error {
+func (ms *MemoryStorage) Append(entries []*pb.Entry) int64 {
 	if len(entries) == 0 {
-		return nil
+		return -1
 	}
 
 	ms.Lock()
@@ -230,23 +254,26 @@ func (ms *MemoryStorage) Append(entries []*pb.Entry) error {
 
 	// shortcut if there is no new entry.
 	if last < first {
-		return nil
+		return -1
 	}
 	// truncate compacted entries
 	if first > entries[0].Index {
 		entries = entries[first-entries[0].Index:]
 	}
-
-	offset := entries[0].Index - ms.ents[0].Index
+	// offset是存入日志的第一个元素与当前日志的第一个元素之间的偏移
+	var offset uint64 = 0
+	if len(ms.ents) != 0 {
+		offset = entries[0].Index - ms.ents[0].Index
+	}
 	switch {
+	// 如果暂存区的数据长度大于offset
 	case uint64(len(ms.ents)) > offset:
+		// 截断现在的暂存区，按照最新的日志往后拓展
 		ms.ents = append([]*pb.Entry{}, ms.ents[:offset]...)
-		ms.ents = append(ms.ents, entries...)
-	case uint64(len(ms.ents)) == offset:
+		// 将数据放入最新的暂存区
 		ms.ents = append(ms.ents, entries...)
 	default:
-		log.Printf("missing log entry [last: %d, append at: %d]\n",
-			ms.lastIndex(), entries[0].Index)
+		ms.ents = append(ms.ents, entries...)
 	}
-	return nil
+	return int64(ms.lastIndex())
 }

@@ -124,7 +124,7 @@ func (rn *RawNode) HasReady() bool {
 	if hardSt := r.hardState(); !IsEmptyHardState(hardSt) && !isHardStateEqual(hardSt, rn.prevHardSt) {
 		return true
 	}
-	if len(r.msgs) > 0 || len(r.raftLog.ms.ents) > 0 || len(r.raftLog.nextEnts()) > 0 {
+	if len(r.msgs) > 0 || len(r.ms.ents) > 0 || len(r.raftLog.nextEnts()) > 0 {
 		return true
 	}
 	return false
@@ -134,10 +134,8 @@ func (rn *RawNode) Bootstrap(peers []Peer) error {
 	if len(peers) == 0 {
 		return errors.New("must provide at least one peer to Bootstrap")
 	}
-	lastIndex, err := rn.raft.raftLog.storage.LastIndex()
-	if err != nil {
-		return err
-	}
+	lastIndex := rn.raft.raftLog.storage.LastIndex()
+
 	if lastIndex != 0 {
 		return errors.New("can't bootstrap a nonempty Storage")
 	}

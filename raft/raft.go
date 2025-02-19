@@ -103,8 +103,10 @@ type raft struct {
 	// 用于标识candidate重新投票的间隔，只有达到了这个间隔才会发生重新投票，暂定为ElectionTimeout的十倍
 	votedExpire uint64
 	// lead current leader
-	lead uint64
+	lead     uint64
+	isLeader bool
 	// raft log information
+
 	raftLog  *raftLog
 	readOnly *readOnly
 	ms       *MemoryStorage
@@ -154,6 +156,7 @@ func newRaft(config *RaftConfig) *raft {
 		raftLog:            raftlog,
 		ms:                 ms,
 		readOnly:           newReadOnly(ReadOnlySafe),
+		isLeader:           false,
 		maxMsgSize:         config.MaxSizePerMsg,
 		maxUncommittedSize: config.MaxUncommittedEntriesSize,
 		voted:              false,
@@ -225,10 +228,41 @@ func (r *raft) reset(term uint64) {
 	r.uncommittedSize = 0
 }
 
-// appendEntry todo: after the storage module finished
-func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
-
+func (r *raft) appendEntry(es []*pb.Entry) (accepted bool) {
+	li := r.raftLog.lastIndex()
+	for i := range es {
+		es[i].Term = r.Term
+		es[i].Index = li + 1 + uint64(i)
+	}
+	// 确保未提交的数据更新到uncommitedSize中，这里是提交的字节数量
+	if !r.increaseUncommittedSize(es) {
+		log.Printf(
+			"%x appending new entries to log would exceed uncommitted entry size limit; dropping proposal\n",
+			r.id,
+		)
+		// Drop the proposal.
+		return false
+	}
+	// use latest "last" index after truncate/append
+	lastIndex := r.raftLog.storage.Append(es)
+	// 更新自己的progress状态说明自己最新的匹配位置并且还要说明现在当前节点不属于探针状态
+	r.processTracker.Progress[r.id].MaybeUpdate(uint64(lastIndex))
+	//// Regardless of maybeCommit's return, our caller will call bcastAppend.
+	// 这里先更新commited的参数实际这个地方还没有更新，因为这里设计的数据更新是异步的
+	r.maybeCommit()
 	return true
+}
+
+// maybeCommit 检查当前 Raft 节点的日志条目是否可以被提交（committed）。在 Raft 协议中，日志条目只有在被大多数
+// 节点复制后才能被认为是已提交的。r.maybeCommit() 会检查每个节点的 Match 指针，确定是否有足够的节点
+// 已经复制了某个日志条目，从而推进 CommitIndex
+func (r *raft) maybeCommit() bool {
+	//遍历所有节点的 Match 指针，收集每个节点的最新匹配日志索引。
+	//使用这些索引计算当前可以提交的日志索引。
+	//更新 CommitIndex，使其指向可以提交的日志条目
+	commonMatchIndex := r.processTracker.Committed()
+	// 判断是否需要更新Committed指针
+	return r.raftLog.maybeCommit(commonMatchIndex, r.Term)
 }
 
 // tickElection is run by followers and candidates after r.electionTimeout.
@@ -241,6 +275,25 @@ func (r *raft) tickElection() {
 			log.Printf("error occurred during election: %v\n", err)
 		}
 	}
+}
+func (r *raft) increaseUncommittedSize(ents []*pb.Entry) bool {
+	var s uint64
+	for _, e := range ents {
+		s += uint64(PayloadSize(e))
+	}
+
+	if r.uncommittedSize > 0 && s > 0 && r.uncommittedSize+s > r.maxUncommittedSize {
+		// If the uncommitted tail of the Raft log is empty, allow any size
+		// proposal. Otherwise, limit the size of the uncommitted tail of the
+		// log and drop any proposal that would push the size over the limit.
+		// Note the added requirement s>0 which is used to make sure that
+		// appending single empty entries to the log always succeeds, used both
+		// for replicating a new leader's initial empty entry, and for
+		// auto-leaving joint configurations.
+		return false
+	}
+	r.uncommittedSize += s
+	return true
 }
 
 // tickHeartbeat is run by leaders to send a MsgBeat after r.heartbeatTimeout.
@@ -272,6 +325,7 @@ func (r *raft) becomeFollower(term uint64, lead uint64) {
 	r.lead = lead
 	r.state = StateFollower
 	r.step = stepFollower
+	r.isLeader = false
 	log.Printf("%x became follower at term %d\n", r.id, r.Term)
 }
 
@@ -298,13 +352,8 @@ func (r *raft) becomeLeader() {
 	r.tick = r.tickHeartbeat
 	r.lead = r.id
 	r.state = StateLeader
-	//r.pendingConfIndex = r.raftLog.lastIndex()
-	r.step = stepLeader
-	emptyEnt := pb.Entry{Data: nil}
-	if !r.appendEntry(emptyEnt) {
-		// This won't happen because we just called reset() above.
-		log.Printf("empty entry was dropped")
-	}
+	r.isLeader = true
+	// 这里不要往里面去放一个空白的日志，我的index是从0开始的
 	//r.reduceUncommittedSize([]pb.Entry{emptyEnt})
 	log.Printf("%x became leader at term %d\n", r.id, r.Term)
 }
@@ -325,7 +374,8 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		if r.processTracker.Progress[r.id] == nil {
 			return ErrProposalDropped
 		}
-		if !r.appendEntry(convertToPBEntries(msg.Entries)...) {
+
+		if !r.appendEntry(msg.Entries) {
 			return ErrProposalDropped
 		}
 		// broadcast append msg
@@ -477,10 +527,11 @@ func (r *raft) handleAppendEntries(msg *pb.Message) {
 	if _, ok := r.raftLog.AppendWithConflictCheck(msg); ok {
 		r.send(&pb.Message{To: msg.From, Type: pb.MessageType_MsgAppResp, Index: r.ms.lastIndex()})
 	} else {
-		// 到这个位置说明第一个位置都没法匹配咯,要立刻开启探针模式
+		// 到这个位置说明第一个位置都没法匹配咯,要立刻开启探针模式 todo 这个后面的内容暂时可能没法测，工作量太大了
+
 		hintIndex := min(msg.Index, r.raftLog.lastIndex())
 		hintIndex = r.raftLog.findConflictByTerm(hintIndex, msg.LogTerm)
-		hintTerm, err := r.raftLog.term(hintIndex)
+		hintTerm, err := r.raftLog.storage.Term(hintIndex)
 		if err != nil {
 			panic(fmt.Sprintf("term(%d) must be valid, but got %v", hintIndex, err))
 		}
@@ -698,9 +749,9 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	m := pb.Message{}
 	m.To = to
 
-	term, _ := r.raftLog.term(pr.Next - 1)
+	term, _ := r.raftLog.storage.Term(pr.Next - 1)
 	// 将follower的想要的数据之后的数据段发送出去，这里是直接发送到结尾
-	ents := r.ms.ents[pr.Next:]
+	ents := r.ms.ents[pr.Next-1:]
 	if len(ents) == 0 && !sendIfEmpty {
 		return false
 	}
@@ -711,6 +762,7 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	// 封装消息数据
 	m.Type = pb.MessageType_MsgApp
 	m.Index = pr.Next - 1
+	// 接受者的对应接受位置leader的任期
 	m.LogTerm = term
 	m.Entries = entries
 	m.Commit = r.raftLog.committed
@@ -728,7 +780,6 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 		}
 	}
 	r.send(&m)
-
 	return true
 }
 
@@ -802,15 +853,15 @@ func (r *raft) pastElectionTimeout() bool {
 	return r.electionElapsed >= uint64(r.electionTimeout)
 }
 
-func (l *raftLog) term(i uint64) (uint64, error) {
+func (r *raft) term(i uint64) (uint64, error) {
 	// the valid term range is [index of dummy entry, last index]
-	dummyIndex := l.firstIndex() - 1
+	dummyIndex := r.ms.firstIndex() - 1
 	// out of bounder
-	if i < dummyIndex || i > l.lastIndex() {
+	if i < dummyIndex || i > r.ms.lastIndex() {
 		// TODO: return an error instead?
 		return 0, nil
 	}
-	t, err := l.ms.Term(i)
+	t, err := r.ms.Term(i)
 	if err == nil {
 		return t, nil
 	}

@@ -2,7 +2,6 @@ package tracker
 
 import (
 	"fmt"
-	"sort"
 )
 
 // ProgressMap 是一个映射，用于存储每个节点的进度信息。
@@ -86,19 +85,19 @@ func (pt *ProgressTracker) TallyVotes() (granted, rejected int) {
 }
 
 // Committed 返回最高的已提交日志索引。
-func (pt *ProgressTracker) Committed() uint64 {
-	var matches []uint64
-	for _, pr := range pt.Progress {
-		matches = append(matches, pr.Match)
-	}
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i] < matches[j]
-	})
-	if len(matches) == 0 {
-		return 0
-	}
-	return matches[len(matches)/2]
-}
+//func (pt *ProgressTracker) Committed() uint64 {
+//	var matches []uint64
+//	for _, pr := range pt.Progress {
+//		matches = append(matches, pr.Match)
+//	}
+//	sort.Slice(matches, func(i, j int) bool {
+//		return matches[i] < matches[j]
+//	})
+//	if len(matches) == 0 {
+//		return 0
+//	}
+//	return matches[len(matches)/2]
+//}
 
 // String 返回 ProgressTracker 的字符串表示。
 func (pt *ProgressTracker) String() string {
@@ -163,4 +162,24 @@ func insertionSort(sl []uint64) {
 			sl[j], sl[j-1] = sl[j-1], sl[j]
 		}
 	}
+}
+
+// Committed 返回所有节点的共同可提交的index,也就是可以共同match的index
+// todo 其实需要一个Quorum来判断操作是否共识合法 但是由于我比较懒所以懒得再加上合法性判断了
+func (p *ProgressTracker) Committed() uint64 {
+	minIndex := uint64(0)
+	first := true
+	for _, pr := range p.Progress {
+		// Match是可以为0的
+		if pr.Match >= 0 {
+			if first || pr.Match < minIndex {
+				minIndex = pr.Match
+				first = false
+			}
+		}
+	}
+	if first {
+		return 0
+	}
+	return minIndex
 }

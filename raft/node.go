@@ -59,7 +59,7 @@ type node struct {
 	rn *RawNode
 	// use it for send message
 	client []*RaftClient
-	// DB instance
+	// DB instance todo DB要封装成上层应用
 	DB *ComDB.DB
 }
 
@@ -187,17 +187,24 @@ func (n *node) run() {
 					log.Printf("raft.node: %x rejected proposal because it is not the leader\n", r.id)
 					continue
 				}
-				// 构造日志条目
-				ent := pb.Entry{
-					Term:  r.Term,
-					Index: r.raftLog.lastIndex() + 1,
-					Data:  pm.entryDetails,
+				// 构造日志条目,每次传输的日志条目必须不为空，也就是一定是有操作的日志
+				if len(pm.entryDetails) != 0 {
+					// 记住一下日志与message是处于不同的位置的
+					ent := &pb.Entry{
+						Term:  r.Term,
+						Index: r.raftLog.lastIndex() - 1,
+						Data:  pm.entryDetails,
+					}
+					ents := make([]*pb.Entry, 1)
+					ents[0] = ent
+					m := &pb.Message{
+						To:      r.id,
+						Index:   r.raftLog.lastIndex() - 1,
+						Entries: ents,
+						Type:    pb.MessageType_MsgProp,
+					}
+					r.Step(m)
 				}
-				// 追加到 Leader 日志
-				if r.appendEntry(ent) {
-					r.bcastAppend() // 广播给其他节点
-				}
-
 			case m := <-n.recvc:
 				// 处理来自其他节点的消息
 				//if pr := r.processTracker.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
@@ -205,7 +212,9 @@ func (n *node) run() {
 				//}
 				// 判断信息是否是属于这个节点的
 				if m.To == r.id {
-					log.Printf("Raft Node %d receive message[%+v] from node %d", n.rn.raft.id, m, m.From)
+					if m.Type != pb.MessageType_MsgHeartbeatResp && m.Type != pb.MessageType_MsgHeartbeat {
+						log.Printf("Raft Node %d receive message[%+v] from node %d", n.rn.raft.id, m, m.From)
+					}
 					r.Step(m)
 				}
 
@@ -257,8 +266,6 @@ func sendMessages(sleepTime time.Duration, n *node) {
 				// 发送消息的逻辑
 				if err := sendAllCache(msg, n); err != nil {
 					log.Printf("Error sending message: %v", err)
-				} else {
-					log.Printf("[Raft Node %d]Message sent: %+v", n.rn.raft.id, msg)
 				}
 			} else {
 				// 如果暂存区为空，解锁互斥锁
@@ -350,8 +357,13 @@ func (n *node) handleRaftPut(writer http.ResponseWriter, request *http.Request) 
 		log.Printf("Failed to decode request body: %v\n", err)
 		return
 	}
-	// only leader can put message
+	leaderID := n.rn.raft.lead
 	if n.rn.raft.state != StateLeader {
+		// 只返回 leader 的 ID
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(writer, leaderID)
+		log.Printf("only leader can put value. Current leader ID: %d\n", leaderID)
 		return
 	}
 	for key, value := range kv {
@@ -363,7 +375,6 @@ func (n *node) handleRaftPut(writer http.ResponseWriter, request *http.Request) 
 		n.propc <- msg
 		log.Printf("Key-value pair inserted successfully: key=%s, value=%s\n", key, value)
 	}
-
 }
 
 // get
@@ -398,7 +409,16 @@ func (n *node) handleRaftDelete(writer http.ResponseWriter, request *http.Reques
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
+	// 将当前的leader信息返回
+	leaderID := n.rn.raft.lead
+	if n.rn.raft.state != StateLeader {
+		// 只返回 leader 的 ID
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(writer, leaderID)
+		log.Printf("only leader can delete value. Current leader ID: %d\n", leaderID)
+		return
+	}
 	key := request.URL.Query().Get("key")
 	if key == "" {
 		http.Error(writer, "Key is required", http.StatusBadRequest)
@@ -419,6 +439,7 @@ func (n *node) handleRaftDelete(writer http.ResponseWriter, request *http.Reques
 
 // compiler seem have some problems
 func startRaftHttpServer(n *node, addr string) {
+	// todo 如何知道该节点到底是不是leader？ 动态获取集群Leader节点地址？
 	log.Printf("Raft Node: %d Starting Raft HTTP server on %s\n", n.rn.raft.id, addr)
 	// 不同节点的动态路由
 	putRouter := fmt.Sprintf("/raft/%d/put", n.rn.raft.id)
@@ -433,7 +454,6 @@ func startRaftHttpServer(n *node, addr string) {
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("Failed to start HTTP server: %v", err)
 	}
-
 }
 func (s *raftServer) SendMessage(ctx context.Context, msg *pb.Message) (*pb.Message, error) {
 	// 将接收到的消息发送到 recvc 通道
