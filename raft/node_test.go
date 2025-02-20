@@ -82,8 +82,7 @@ func TestRaftPut(t *testing.T) {
 
 	// 构造 JSON 请求体
 	kv := map[string]string{
-		"key":   key,
-		"value": value,
+		key: value,
 	}
 	jsonBody, err := json.Marshal(kv)
 	if err != nil {
@@ -157,4 +156,32 @@ func TestRaftPut(t *testing.T) {
 		log.Printf("Response from node %d: %s", id, body)
 	}
 
+}
+
+func TestRaftGet(t *testing.T) {
+	// 模拟客户端请求
+	key := "testKey"
+	config1, err := LoadConfig("./configs/raft_config_1.yaml")
+	if err != nil {
+		panic(err)
+	}
+	config2, err := LoadConfig("./configs/raft_config_2.yaml")
+	if err != nil {
+		panic(err)
+	}
+	config3, err := LoadConfig("./configs/raft_config_3.yaml")
+	if err != nil {
+		panic(err)
+	}
+	configs := []*RaftConfig{config1, config2, config3}
+	for _, config := range configs {
+		httpAddr := config.HttpServerAddr
+		id := config.ID
+		// 构造初始请求 URL
+		getEndpoint := fmt.Sprintf("http://%s/raft/%d/get?key=%s", httpAddr, id, key)
+		var resp *http.Response
+		// 发送 GET 请求
+		resp, _ = http.Get(getEndpoint)
+		log.Println(resp)
+	}
 }

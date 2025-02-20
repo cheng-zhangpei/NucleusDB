@@ -11,7 +11,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 )
@@ -59,8 +58,6 @@ type node struct {
 	rn *RawNode
 	// use it for send message
 	client []*RaftClient
-	// DB instance todo DB要封装成上层应用
-	DB *ComDB.DB
 }
 
 type raftServer struct {
@@ -118,13 +115,6 @@ func StartNodeSeperated(c *RaftConfig, options ComDB.Options) {
 }
 
 func newNode(rn *RawNode, config *RaftConfig) *node {
-	opts := ComDB.DefaultOptions
-	dir, _ := os.MkdirTemp("", "bitcask-go")
-	opts.DirPath = dir
-	db, err := ComDB.Open(opts)
-	if err != nil {
-		panic(err)
-	}
 	return &node{
 		propc:    make(chan *msgWithResult, 10),
 		recvc:    make(chan *pb.Message, 1024),
@@ -139,7 +129,6 @@ func newNode(rn *RawNode, config *RaftConfig) *node {
 		status: make(chan chan *BaseStatus),
 		rn:     rn,
 		client: NewRaftClient(config.GRPCClientAddr, config.GRPCServerAddr),
-		DB:     db,
 	}
 }
 
@@ -386,8 +375,8 @@ func (n *node) handleRaftGet(writer http.ResponseWriter, request *http.Request) 
 
 	key := request.URL.Query().Get("key")
 	log.Printf("Received GET request for key: %s\n", key)
-
-	value, err := n.DB.Get([]byte(key))
+	// 我都无语了开的数据库实例都不一样
+	value, err := n.rn.raft.app.DB.Get([]byte(key))
 	if err != nil && err != ComDB.ErrKeyNotFound {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		log.Printf("Failed to get value for key: key=%s, error=%v\n", key, err)

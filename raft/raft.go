@@ -57,20 +57,19 @@ type stepFunc func(r *raft, msg *pb.Message) error
 
 // raft consensus algorithm: build a simple distributed database in order to adapt the env of k8s
 type RaftConfig struct {
-	ID                        uint64        `yaml:"id"`
-	ElectionTick              uint64        `yaml:"election_tick"`
-	HeartbeatTick             uint64        `yaml:"heartbeat_tick"`
-	MaxSizePerMsg             uint64        `yaml:"max_size_per_msg"`
-	MaxCommittedSizePerReady  uint64        `yaml:"max_committed_size_per_ready"`
-	MaxUncommittedEntriesSize uint64        `yaml:"max_uncommitted_entries_size"`
-	SendInterval              time.Duration `yaml:"send_interval"`
-	CheckQuorum               bool          `yaml:"check_quorum"`
-	GRPCServerAddr            string        `yaml:"grpc_server_addr"`
-	GRPCClientAddr            []string      `yaml:"grpc_client_addr"`
-	TickInterval              time.Duration `yaml:"tick_interval"`
-	HttpServerAddr            string        `yaml:"http_server_addr"`
-	InflghtsMaxSize           int           `yaml:"inflghts_max_size"`
-	// todo 补充数据库相关的配置 => 这个项目会使得配置项非常长，现在我终于有一种做非常庞大项目的感觉了....
+	ID                        uint64        `yaml:"id" env:"NODE_ID"`
+	ElectionTick              uint64        `yaml:"election_tick" env:"ELECTION_TICK"`
+	HeartbeatTick             uint64        `yaml:"heartbeat_tick" env:"HEARTBEAT_TICK"`
+	MaxSizePerMsg             uint64        `yaml:"max_size_per_msg" env:"MAX_SIZE_PER_MSG"`
+	MaxCommittedSizePerReady  uint64        `yaml:"max_committed_size_per_ready" env:"MAX_COMMITTED_SIZE_PER_READY"`
+	MaxUncommittedEntriesSize uint64        `yaml:"max_uncommitted_entries_size" env:"MAX_UNCOMMITTED_ENTRIES_SIZE"`
+	SendInterval              time.Duration `yaml:"send_interval" env:"SEND_INTERVAL"`
+	CheckQuorum               bool          `yaml:"check_quorum" env:"CHECK_QUORUM"`
+	GRPCServerAddr            string        `yaml:"grpc_server_addr" env:"GRPC_SERVER_ADDR"`
+	GRPCClientAddr            []string      `yaml:"grpc_client_addr" env:"GRPC_CLIENT_ADDRS" envSeparator:","`
+	TickInterval              time.Duration `yaml:"tick_interval" env:"TICK_INTERVAL"`
+	HttpServerAddr            string        `yaml:"http_server_addr" env:"HTTP_SERVER_ADDR"`
+	InflghtsMaxSize           int           `yaml:"inflghts_max_size" env:"INFLIGHTS_MAX_SIZE"`
 }
 
 // validate raft config validation
