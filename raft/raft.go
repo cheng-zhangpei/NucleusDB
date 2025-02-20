@@ -232,7 +232,7 @@ func (r *raft) appendEntry(es []*pb.Entry) (accepted bool) {
 	li := r.raftLog.lastIndex()
 	for i := range es {
 		es[i].Term = r.Term
-		es[i].Index = li + 1 + uint64(i)
+		es[i].Index = li + uint64(i)
 	}
 	// 确保未提交的数据更新到uncommitedSize中，这里是提交的字节数量
 	if !r.increaseUncommittedSize(es) {
@@ -481,6 +481,7 @@ func stepCandidate(r *raft, msg *pb.Message) error {
 	case pb.MessageType_MsgApp:
 		r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
 		r.handleAppendEntries(msg)
+		println()
 	case pb.MessageType_MsgHeartbeat:
 		r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
 		r.handleHeartbeat(msg)

@@ -145,33 +145,45 @@ func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 	logTerm := msg.LogTerm
 	index := msg.Index
 	if l.matchIndex(index, logTerm) || l.isEntriesEmpty() {
-		FollowerEnts, err := l.storage.GetEntries()
-		if err != nil {
-			panic(err)
-		}
+
 		// leader and follower have the same entry in this index
 		// lastIndex, err := l.storage.LastIndex()
 		newIndex := l.storage.LastIndex() + uint64(len(msg.Entries))
 		// 就这现在最新的位置往前找冲突
 		conflict := l.findConflict(msg.Entries)
 		switch {
-		case conflict == 0: // 需要直接把新的日志内容丢进去是吗？
+		case conflict == 0:
+			// 不存在冲突就直接放入
+			_ = l.storage.Append(msg.Entries[:])
+
 		case conflict <= l.committed:
 			log.Fatalf("entry %d conflict with committed entry [committed(%d)]\n", conflict, l.committed)
 		default:
-			// 此处将follower的entries给打印出来看一眼
-			for _, entry := range FollowerEnts {
-				fmt.Println(entry)
-			}
 			// 计算冲突后需要追加的日志条目起始索引
 			start := max(conflict-index, 0)
 			// 追加从冲突点开始的日志条目
+
 			_ = l.storage.Append(msg.Entries[start:])
+			FollowerEnts, err := l.storage.GetEntries()
+			if err != nil {
+				panic(err)
+			}
+			for _, entry := range FollowerEnts {
+				fmt.Println(entry)
+			}
 		}
 		// update commited field in raftLog，这里要判断好提交信息是否合法
 		l.commitTo(min(msg.Commit, newIndex))
+		FollowerEnts, err := l.storage.GetEntries()
+		if err != nil {
+			panic(err)
+		}
+		for _, entry := range FollowerEnts {
+			fmt.Println(entry)
+		}
 		return newIndex, true
 	}
+
 	return 0, false
 }
 func (l *raftLog) commitTo(tocommit uint64) {
@@ -210,7 +222,7 @@ func (l *raftLog) findConflict(ents []*pb.Entry) uint64 {
 			}
 			// ne 是来自外部的消息，一开始index肯定是0
 			// 真实的index是需要小一个的
-			return ne.Index - 1
+			return ne.Index
 		}
 	}
 	return 0

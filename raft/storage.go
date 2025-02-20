@@ -148,7 +148,7 @@ func (ms *MemoryStorage) lastIndex() uint64 {
 	if ms.ents[0] == nil {
 		return uint64(len(ms.ents))
 	}
-	return ms.ents[0].Index + uint64(len(ms.ents)) - 1
+	return ms.ents[0].Index + uint64(len(ms.ents))
 }
 
 // FirstIndex implements the Storage interface.

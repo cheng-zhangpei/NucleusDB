@@ -192,14 +192,14 @@ func (n *node) run() {
 					// 记住一下日志与message是处于不同的位置的
 					ent := &pb.Entry{
 						Term:  r.Term,
-						Index: r.raftLog.lastIndex() - 1,
+						Index: r.raftLog.lastIndex(),
 						Data:  pm.entryDetails,
 					}
 					ents := make([]*pb.Entry, 1)
 					ents[0] = ent
 					m := &pb.Message{
 						To:      r.id,
-						Index:   r.raftLog.lastIndex() - 1,
+						Index:   r.raftLog.lastIndex(),
 						Entries: ents,
 						Type:    pb.MessageType_MsgProp,
 					}
