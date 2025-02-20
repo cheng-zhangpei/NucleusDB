@@ -943,8 +943,13 @@ rpc的server收到数据之后，通过通道将数据传输到run所启动的�
     leader拿到rejectHint=6，下一次发送nextIndex=5，follower继续冲突检测
     指导leader发送logTerm=2，index=4时，不发生冲突
 
-	
+  在编码中，需要重点区分msg的index与entries的index。msg的index是指当前暂存区中日志的索引，这里主要是用于冲突检测的。entries的索引是用于记录全局日子的index包 含已经持久化的。
 
+#### 日志与状态持久化
+
+  在raft模块的上层为应用模块。应用模块通过applyc与commitc来与数据库应用交付。在etcd中，应用的概念其实是一些在数据库运行过程中的高级功能，比如更改配置、保存持久化节点的HardState、定时创建快照等功能，这些功能要等节点自身的状态处于“就绪状态”时才能进行。所以readyc与advancec是专门设置raft模块与提供这些功能的应用之间的交互。
+
+  本系统实现的raft只是一个简化版本，并不提供快照与动态配置的功能（未来有时间应该会做，接口已经预留好了）。所以为了raft的日志可以应用到状态机，我将ComDB的application设置为数据库。
 
 
 

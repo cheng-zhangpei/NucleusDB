@@ -114,7 +114,7 @@ func (l *raftLog) lastIndex() uint64 {
 func (l *raftLog) lastTerm() uint64 {
 	t, err := l.storage.Term(l.lastIndex())
 	if err != nil {
-		log.Fatalln("unexpected error when getting the last term")
+		log.Fatalf("unexpected error when getting the last term %v\n", err)
 	}
 	return t
 }
@@ -174,13 +174,13 @@ func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 		}
 		// update commited field in raftLog，这里要判断好提交信息是否合法
 		l.commitTo(min(msg.Commit, newIndex))
-		FollowerEnts, err := l.storage.GetEntries()
-		if err != nil {
-			panic(err)
-		}
-		for _, entry := range FollowerEnts {
-			fmt.Println(entry)
-		}
+		//FollowerEnts, err := l.storage.GetEntries()
+		//if err != nil {
+		//	panic(err)
+		//}
+		//for _, entry := range FollowerEnts {
+		//	fmt.Println(entry)
+		//}
 		return newIndex, true
 	}
 

@@ -1,12 +1,14 @@
 package raft
 
 import (
+	"ComDB"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"testing"
 )
@@ -16,6 +18,7 @@ import (
 // 测试是否会时间到期触发选举
 // 计时器的设置是每一个节点都有一个对应的时钟触发器
 func TestElectionTimeout(t *testing.T) {
+	// raft 配置
 	config1, err := LoadConfig("./configs/raft_config_1.yaml")
 	if err != nil {
 		panic(err)
@@ -28,15 +31,26 @@ func TestElectionTimeout(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	// 开三个节点慢慢开始联测
-	StartNode(config1)
 
-	StartNode(config2)
+	// 拿到数据库配置
+	options1 := ComDB.DefaultOptions
+	options2 := ComDB.DefaultOptions
+	options3 := ComDB.DefaultOptions
+	dir1, _ := os.MkdirTemp("", "raft1")
+	dir2, _ := os.MkdirTemp("", "raft2")
+	dir3, _ := os.MkdirTemp("", "raft3")
 
-	StartNode(config3)
+	options1.DirPath = dir1
+	options2.DirPath = dir2
+	options3.DirPath = dir3
+	// 开三个节点慢慢开始联测-开启数据库调试
+	StartNode(config1, options1)
+
+	StartNode(config2, options2)
+
+	StartNode(config3, options3)
 	// 用一个无限循环 阻塞测试进程，
 	// 否则在子线程调度的时候会将主进程退出从而无法进行测试
-
 	for {
 
 	}

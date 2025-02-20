@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"ComDB"
 	"ComDB/raft/pb"
 	"ComDB/raft/tracker"
 	_ "ComDB/raft/tracker"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -131,9 +133,10 @@ type raft struct {
 	step           stepFunc
 	processTracker *tracker.ProgressTracker
 	status         BaseStatus
+	app            *application
 }
 
-func newRaft(config *RaftConfig) *raft {
+func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 	if err := config.validate(); err != nil {
 		panic(err)
 	}
@@ -148,7 +151,10 @@ func newRaft(config *RaftConfig) *raft {
 	//}
 	electionTimeout := configElectionTimeout(config.TickInterval)
 	heartbeatTimeout := configHeartbeatTimeout(time.Duration(electionTimeout), config.TickInterval)
-
+	appl, err := newApplication(options, config.ID)
+	if err != nil {
+		panic(err)
+	}
 	r := &raft{
 		id: config.ID,
 
@@ -165,6 +171,7 @@ func newRaft(config *RaftConfig) *raft {
 		electionTimeout:    electionTimeout,
 		heartbeatTimeout:   uint64(heartbeatTimeout),
 		checkQuorum:        config.CheckQuorum,
+		app:                appl,
 	}
 	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
 	// 需要对processTracker进行初始化
@@ -361,13 +368,14 @@ func (r *raft) becomeLeader() {
 // ===========================================================state change==========================================
 // stepLeader send message to leader
 func stepLeader(r *raft, msg *pb.Message) error {
+	pr := r.processTracker.Progress[msg.To]
 	switch msg.Type {
 	case pb.MessageType_MsgBeat:
 		r.bcastHeartbeat()
 		return nil
 	case pb.MessageType_MsgProp:
 		// 处理 MsgProp 类型的消: 确保提案的正确性和合法性，并将日志条目追加到 Raft 日志中
-		pr := r.processTracker.Progress[msg.To]
+
 		if len(msg.Entries) == 0 {
 			log.Fatalf("%x stepped empty MsgProp\n", r.id)
 		}
@@ -380,58 +388,60 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		}
 		// broadcast append msg
 		r.bcastAppend()
-		switch msg.Type {
-		case pb.MessageType_MsgAppResp:
-
-			pr.RecentActive = true
-			if msg.Reject {
-				log.Printf("%x received MsgAppResp(rejected, hint: (index %d, term %d)) from %x for index %d\n",
-					r.id, msg.RejectHint, msg.LogTerm, msg.From, msg.Index)
-				nextProbeIdx := msg.RejectHint
-				if msg.Term > 0 {
-					nextProbeIdx = r.raftLog.findConflictByTerm(msg.RejectHint, msg.LogTerm)
-				}
-				// update the Next field in progressTrack
-				if pr.MaybeDecrTo(msg.Index, nextProbeIdx) {
-					log.Printf("%x decreased progress of %x to [%s]\n", r.id, msg.From, pr)
-					if pr.State == tracker.StateReplicate {
-						pr.BecomeProbe()
-					}
-					// change to the check model
-					r.sendAppend(msg.From)
-				}
-			} else {
-				if pr.MaybeUpdate(msg.Index) {
-					switch {
-					case pr.State == tracker.StateProbe:
-						pr.BecomeReplicate()
-						// We've updated flow control information above, which may
-						// allow us to send multiple (size-limited) in-flight messages
-						// at once (such as when transitioning from probe to
-						// replicate, or when freeTo() covers multiple messages). If
-						// we have more entries to send, send as many messages as we
-						// can (without sending empty messages for the commit index)
-						for r.maybeSendAppend(msg.From, false) {
-
-						}
-					}
-				}
+	case pb.MessageType_MsgAppResp:
+		pr.RecentActive = true
+		if msg.Reject {
+			log.Printf("%x received MsgAppResp(rejected, hint: (index %d, term %d)) from %x for index %d\n",
+				r.id, msg.RejectHint, msg.LogTerm, msg.From, msg.Index)
+			nextProbeIdx := msg.RejectHint
+			if msg.Term > 0 {
+				nextProbeIdx = r.raftLog.findConflictByTerm(msg.RejectHint, msg.LogTerm)
 			}
-		case pb.MessageType_MsgHeartbeatResp:
-			pr.RecentActive = true
-			// 在心跳中 不处于冲突检测阶段
-			pr.ProbeSent = false
-			// free one slot for the full inflights window to allow progress.
-			if pr.State == tracker.StateReplicate && pr.UncertainMessage.Full() {
-				// 现在环形缓冲区已经满了
-				pr.UncertainMessage.FreeFirstOne()
-			}
-			// 对方匹配的数据比现在的最后的一条日志数据还要少，所以在心跳的时候继续将缓冲区的数据发出去
-			if pr.Match < r.raftLog.lastIndex() {
+			// update the Next field in progressTrack
+			if pr.MaybeDecrTo(msg.Index, nextProbeIdx) {
+				log.Printf("%x decreased progress of %x to [%s]\n", r.id, msg.From, pr)
+				if pr.State == tracker.StateReplicate {
+					pr.BecomeProbe()
+				}
+				// change to the check model
 				r.sendAppend(msg.From)
 			}
+		} else {
+			// 应用日志
+			r.app.commitc <- msg.Entries
+			// 应用到状态机上
+			r.app.applyc <- getCommand(msg.Entries)
+			if pr.MaybeUpdate(msg.Index) {
+				switch {
+				case pr.State == tracker.StateProbe:
+					pr.BecomeReplicate()
+					// We've updated flow control information above, which may
+					// allow us to send multiple (size-limited) in-flight messages
+					// at once (such as when transitioning from probe to
+					// replicate, or when freeTo() covers multiple messages). If
+					// we have more entries to send, send as many messages as we
+					// can (without sending empty messages for the commit index)
+					for r.maybeSendAppend(msg.From, false) {
+
+					}
+				}
+			}
+		}
+	case pb.MessageType_MsgHeartbeatResp:
+		pr.RecentActive = true
+		// 在心跳中 不处于冲突检测阶段
+		pr.ProbeSent = false
+		// free one slot for the full inflights window to allow progress.
+		if pr.State == tracker.StateReplicate && pr.UncertainMessage.Full() {
+			// 现在环形缓冲区已经满了
+			pr.UncertainMessage.FreeFirstOne()
+		}
+		// 对方匹配的数据比现在的最后的一条日志数据还要少，所以在心跳的时候继续将缓冲区的数据发出去
+		if pr.Match < r.raftLog.lastIndex() {
+			r.sendAppend(msg.From)
 		}
 	}
+
 	return nil
 }
 
@@ -526,7 +536,12 @@ func (r *raft) handleAppendEntries(msg *pb.Message) {
 	}
 	// 这些数据可以放入ms的缓冲区中
 	if _, ok := r.raftLog.AppendWithConflictCheck(msg); ok {
-		r.send(&pb.Message{To: msg.From, Type: pb.MessageType_MsgAppResp, Index: r.ms.lastIndex()})
+		// 将日志给提交
+		r.app.commitc <- msg.Entries
+		// 应用到状态机上
+		r.app.applyc <- getCommand(msg.Entries)
+		// 将已经提交的数据再次发送给leader，让leader也进行提交
+		r.send(&pb.Message{To: msg.From, Type: pb.MessageType_MsgAppResp, Index: r.ms.lastIndex(), Entries: msg.Entries})
 	} else {
 		// 到这个位置说明第一个位置都没法匹配咯,要立刻开启探针模式 todo 这个后面的内容暂时可能没法测，工作量太大了
 
@@ -907,4 +922,21 @@ func convertToPBEntries(entries []*pb.Entry) []pb.Entry {
 		pbEntries[i] = *entry // 假设 Entry 和 pb.Entry 是兼容的
 	}
 	return pbEntries
+}
+
+func getCommand(ent []*pb.Entry) []*applyEntry {
+	result := make([]*applyEntry, 0, len(ent))
+	for _, entry := range ent {
+		data := string(entry.Data)
+		parts := strings.Fields(data)
+		applyEnt := &applyEntry{
+			Command: parts[0],
+			Key:     parts[1],
+		}
+		if len(parts) != 2 {
+			applyEnt.Value = parts[2]
+		}
+		result = append(result, applyEnt)
+	}
+	return result
 }

@@ -68,8 +68,8 @@ type raftServer struct {
 	node *node
 }
 
-func StartNode(c *RaftConfig) {
-	rn, err := NewRawNode(c)
+func StartNode(c *RaftConfig, options ComDB.Options) {
+	rn, err := NewRawNode(c, options)
 	if err != nil {
 		panic(err)
 	}
@@ -92,8 +92,8 @@ func StartNode(c *RaftConfig) {
 	// 此处的设计是为了让多个数据库实例在一个应用中运行
 	go startRaftHttpServer(n, c.HttpServerAddr)
 }
-func StartNodeSeperated(c *RaftConfig) {
-	rn, err := NewRawNode(c)
+func StartNodeSeperated(c *RaftConfig, options ComDB.Options) {
+	rn, err := NewRawNode(c, options)
 	if err != nil {
 		panic(err)
 	}
