@@ -103,11 +103,11 @@ func loadFromEnv(cfg *RaftConfig) error {
 			}
 			field.SetBool(parsed)
 		case time.Duration:
-			parsed, err := time.ParseDuration(envValue)
+			atoi, err := strconv.Atoi(envValue)
 			if err != nil {
-				return fmt.Errorf("invalid duration for %s: %w", envTag, err)
+				return fmt.Errorf("invalid value for %s: %w", envTag, err)
 			}
-			field.SetInt(int64(parsed))
+			field.SetInt(int64(atoi))
 		case string:
 			field.SetString(envValue)
 		default:

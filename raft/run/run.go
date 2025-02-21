@@ -1,8 +1,9 @@
-package run
+package main
 
 import (
 	"ComDB"
 	"ComDB/raft"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -10,9 +11,16 @@ import (
 )
 
 // 在分布式环境下 运行节点
+// 注意一下main方法的工作路径一定是在ComDB下的
 func main() {
 	// 初始化配置
 	log.Println("Starting ComDB raft server...............")
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Printf("Failed to get current working directory: %v\n", err)
+		return
+	}
+	fmt.Printf("Current working directory: %s\n", wd)
 	config, err := raft.LoadConfigWithEnv("../configs/config.yaml") // 需要实现环境变量加载逻辑
 	if err != nil {
 		panic(err)
