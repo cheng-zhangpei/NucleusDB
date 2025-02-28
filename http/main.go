@@ -329,10 +329,8 @@ func handleMemorySearch(writer http.ResponseWriter, request *http.Request) {
 	ms := &search.MemoryStructure{
 		Db: db,
 	}
-
 	// 调用 matchSearch 方法
 	result, err := ms.MatchSearch(searchItem, agentId, opts)
-
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		return
@@ -479,6 +477,20 @@ func healthyCheck(writer http.ResponseWriter, request *http.Request) {
 	_, err = writer.Write(jsonResponse)
 }
 func main() {
+
+	// 创建一个新的日志记录器，输出到标准输出（终端）
+	log.Println("欢迎使用 ComDB！")
+	log.Println("========================================")
+	log.Println("您当前正在单机模式下运行。")
+	log.Println()
+	log.Println("单机模式适用于开发、测试以及小型应用。")
+	log.Println("它允许您在本地机器上充分利用 ComDB 的功能，")
+	log.Println("提供流畅且响应迅速的使用体验。")
+	log.Println()
+	log.Println()
+	log.Println("如需更多信息，请访问我的文档：https://github.com/cheng-zhangpei/ComDB/blob/main/doc/doc.md")
+	log.Println("========================================")
+
 	// 注册处理方法
 	http.HandleFunc("/bitcask/put", handlePut)
 	http.HandleFunc("/bitcask/putByByte", handlePutByte)
@@ -499,7 +511,7 @@ func main() {
 
 	// 启动 HTTP 服务
 	log.Printf("Starting HTTP server on 172.31.88.128:9090...")
-	if err := http.ListenAndServe("172.31.88.135:9090", nil); err != nil {
+	if err := http.ListenAndServe("0.0.0.0:9090", nil); err != nil {
 		log.Fatalf("Failed to start HTTP server: %v\n", err)
 	}
 }

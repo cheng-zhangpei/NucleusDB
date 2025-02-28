@@ -3,6 +3,7 @@ package raft
 import (
 	"ComDB"
 	"ComDB/raft/pb"
+	"ComDB/search"
 	"fmt"
 	"log"
 )
@@ -60,29 +61,76 @@ func (app *application) commit(ents []*pb.Entry) error {
 // apply 应用状态到状态机
 func (app *application) applyAll(appEnts []*applyEntry) error {
 	for _, appEnt := range appEnts {
-		err := app.apply(appEnt.Command, appEnt.Key, appEnt.Value)
+		_, err := app.apply(appEnt.Command, appEnt.Key, appEnt.Value)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func (app *application) apply(command string, key string, value string) error {
+func (app *application) apply(command string, key string, value string) (string, error) {
+	opts := ComDB.DefaultCompressOptions
+
 	switch command {
 	case "PUT":
 		// do put -> 直接将数据放到本地的数据库里面就ok了
 		err := app.DB.Put([]byte(key), []byte(value))
 		if err != nil {
-			return err
+			return "", err
 		}
 	case "DELETE":
 		// do delete -> 删除本地数据库里面的数据
 		err := app.DB.Delete([]byte(key))
 		if err != nil {
-			return err
+			return "", err
+		}
+	case "CreateMemoryMeta":
+		// key 为agentID，value为totalSize（记忆空间大小）
+		meta := search.NewMemoryMeta(key, 20)
+		enMeta := meta.Encode()
+		// 现在是一个空的记忆空间
+		_ = app.DB.Put([]byte(key), enMeta)
+	case "Compress":
+		ms := &search.MemoryStructure{
+			Db: app.DB,
+		}
+		// 获取meta并装载=> 此时记忆空间装载完成
+		metaData, err := ms.FindMetaData([]byte(key))
+		if err != nil {
+			return "", err
+		}
+		ms.Mm = metaData
+		compressor, err := search.NewCompressor(opts, key, ms) // 假设 NewCompressor 是 Compressor 的构造函数
+		if err != nil {
+			return "", err
+		}
+		_, err = compressor.Compress(key, value)
+		if err != nil {
+			return "", err
+		}
+	case "MemSet":
+		// 此处的key是agentId，value是放入记忆空间的值
+		ms := &search.MemoryStructure{
+			Db: app.DB,
+		}
+
+		// 调用 MMSet 方法
+		if err := ms.MMSet([]byte(value), key); err != nil {
+			return "", err
+		}
+		log.Printf("mem has been insert into the memorySpace of agent:%s!\n", key)
+	case "MemDel":
+		ms := &search.MemoryStructure{
+			Db: app.DB,
+		}
+
+		// 调用 MMDel 方法
+		if err, _ := ms.MMDel(key); err != true {
+			log.Fatalln("memory delete fault!")
+			return "", nil
 		}
 	}
-	return nil
+	return "", nil
 }
 
 // Listener 在Application端收到通道信号的操作

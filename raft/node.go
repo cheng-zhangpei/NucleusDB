@@ -4,6 +4,7 @@ import (
 	"ComDB"
 	"ComDB/raft/pb"
 	"ComDB/raft/tracker"
+	"ComDB/search"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -394,7 +396,7 @@ func (n *node) handleRaftGet(writer http.ResponseWriter, request *http.Request) 
 }
 
 func (n *node) handleRaftDelete(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodDelete {
+	if request.Method != http.MethodPost {
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -425,6 +427,176 @@ func (n *node) handleRaftDelete(writer http.ResponseWriter, request *http.Reques
 	writer.WriteHeader(http.StatusOK)
 	writer.Write([]byte("Key deleted successfully"))
 }
+func (n *node) handleMessageSearch(writer http.ResponseWriter, request *http.Request) {
+	// 可以被不同角色的节点使用
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var kv map[string]string
+
+	if err := json.NewDecoder(request.Body).Decode(&kv); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		log.Printf("Failed to decode request body: %v\n", err)
+		return
+	}
+	results := make([]string, 1)
+	opts := ComDB.DefaultCompressOptions
+	for key, value := range kv {
+		ms := &search.MemoryStructure{
+			Db: n.rn.raft.app.DB,
+		}
+		// 调用 matchSearch 方法
+		result, err := ms.MatchSearch(value, key, opts)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		results = append(results, result)
+	}
+	_ = json.NewEncoder(writer).Encode(results)
+}
+
+func (n *node) handleMemSet(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	leaderID := n.rn.raft.lead
+	if n.rn.raft.state != StateLeader {
+		// 只返回 leader 的 ID
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(writer, leaderID)
+		log.Printf("only leader can delete value. Current leader ID: %d\n", leaderID)
+		return
+	}
+	// 解析请求体
+	var data struct {
+		AgentId string `json:"agentId"`
+		Value   string `json:"value"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&data); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var logData = []byte("MemSet " + data.AgentId + " " + data.Value)
+	msg := &msgWithResult{
+		entryDetails: logData,
+		httpType:     HttpTypeDelete,
+	}
+	n.propc <- msg
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte("memory set successfully"))
+}
+
+// 在分布式数据库中删除该Agent的记忆空间
+func (n *node) handleMemoryDel(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	leaderID := n.rn.raft.lead
+	if n.rn.raft.state != StateLeader {
+		// 只返回 leader 的 ID
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(writer, leaderID)
+		log.Printf("only leader can delete value. Current leader ID: %d\n", leaderID)
+		return
+	}
+	var data struct {
+		AgentId string `json:"agentId"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&data); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var logData = []byte("MemDel" + data.AgentId)
+	msg := &msgWithResult{
+		entryDetails: logData,
+		httpType:     HttpTypeDelete,
+	}
+	n.propc <- msg
+}
+
+func (n *node) handleMemoryGet(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从查询参数中获取 agentId
+	agentId := request.URL.Query().Get("agentId")
+	if agentId == "" {
+		http.Error(writer, "agentId parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// 创建 MemoryStructure 实例
+	ms := &search.MemoryStructure{
+		Db: n.rn.raft.app.DB,
+	}
+
+	// 调用 MMGet 方法
+	memory, err := ms.MMGet(agentId)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回结果
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(memory)
+}
+
+func (n *node) handleCompress(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 解析请求体
+	var data struct {
+		AgentID  string `json:"agentId"`
+		Endpoint string `json:"endpoint"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&data); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var logData = []byte("Compress " + data.AgentID + " " + data.Endpoint)
+	msg := &msgWithResult{
+		entryDetails: logData,
+		httpType:     HttpTypeDelete,
+	}
+	n.propc <- msg
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte("compress successfully"))
+}
+
+func (n *node) handleCreateMeta(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var data struct {
+		AgentId   string `json:"agentId"`
+		TotalSize int64  `json:"totalSize"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&data); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var logData = []byte("CreateMemoryMeta " + data.AgentId + " " + strconv.FormatInt(data.TotalSize, 10))
+	msg := &msgWithResult{
+		entryDetails: logData,
+		httpType:     HttpTypeDelete,
+	}
+	n.propc <- msg
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte("memory space successfully"))
+}
 
 // compiler seem have some problems
 func startRaftHttpServer(n *node, addr string) {
@@ -434,10 +606,23 @@ func startRaftHttpServer(n *node, addr string) {
 	putRouter := fmt.Sprintf("/raft/%d/put", n.rn.raft.id)
 	getRouter := fmt.Sprintf("/raft/%d/get", n.rn.raft.id)
 	deleteRouter := fmt.Sprintf("/raft/%d/delete", n.rn.raft.id)
+	// 下面是记忆管理的API
+	MemGetRouter := fmt.Sprintf("/raft/%d/MemGet", n.rn.raft.id)
+	MemSetRouter := fmt.Sprintf("/raft/%d/MemSet", n.rn.raft.id)
+	CompressRouter := fmt.Sprintf("/raft/%d/Compress", n.rn.raft.id)
+	MemorySearchRouter := fmt.Sprintf("/raft/%d/MemorySearch", n.rn.raft.id)
+	MemDelRouter := fmt.Sprintf("/raft/%d/MemDel", n.rn.raft.id)
+	MemCreateMetaRouter := fmt.Sprintf("/raft/%d/MemCreateMeta", n.rn.raft.id)
 	// 注册 HTTP 处理函数
 	http.HandleFunc(putRouter, n.handleRaftPut)
 	http.HandleFunc(getRouter, n.handleRaftGet)
 	http.HandleFunc(deleteRouter, n.handleRaftDelete)
+	http.HandleFunc(MemGetRouter, n.handleMemoryGet)
+	http.HandleFunc(MemSetRouter, n.handleMemSet)
+	http.HandleFunc(CompressRouter, n.handleCompress)
+	http.HandleFunc(MemorySearchRouter, n.handleMessageSearch)
+	http.HandleFunc(MemDelRouter, n.handleMemoryDel)
+	http.HandleFunc(MemCreateMetaRouter, n.handleCreateMeta)
 
 	// 启动 HTTP 服务器,这里直接阻塞进程就ok了,后台的进程都在成功运行
 	if err := http.ListenAndServe(addr, nil); err != nil {

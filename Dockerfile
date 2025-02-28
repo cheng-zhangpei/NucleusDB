@@ -4,14 +4,15 @@ FROM golang:1.22-alpine AS builder
 # 设置工作目录为项目根目录（注意路径层级）
 WORKDIR /app
 
-# 复制整个项目（包括 ComdDB 和 raft 目录）
-COPY .. .
-
+# 复制整个项目
+COPY . .
+#http://goproxy.cn
 # 进入 raft/run 目录构建可执行文件
 WORKDIR /app/raft/run
 
 # 下载依赖并构建（Go 模块路径可能需要调整）
-RUN go mod tidy -C ../../ComDB && \
+RUN go env -w GOPROXY=https://goproxy.cn,direct && \
+    go mod tidy -C ../../ && \
     CGO_ENABLED=0 GOOS=linux go build -o node .&& \
     chmod +x node
 
@@ -36,3 +37,4 @@ EXPOSE 8080 5001
 
 # 设置容器启动命令
 CMD ["./node"]
+
