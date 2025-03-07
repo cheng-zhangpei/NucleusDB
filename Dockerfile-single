@@ -3,20 +3,21 @@ FROM golang:1.22-alpine AS builder
 
 # 设置工作目录为项目根目录（注意路径层级）
 WORKDIR /app
+RUN apk update && apk add --no-cache build-base git
 
 # 复制整个项目
 COPY . .
-WORKDIR /app/http/main
+WORKDIR /app/http/
 
 RUN go env -w GOPROXY=https://goproxy.cn,direct && \
-    go mod tidy -C ../../ && \
-    CGO_ENABLED=0 GOOS=linux go build -o http .&& \
+    go mod tidy -C ../&& \
+    CGO_ENABLED=1 GOOS=linux go build -o http .&& \
     chmod +x http
-
 
 
 # 运行时阶段：使用轻量级 Alpine 镜像
 FROM alpine:latest
+RUN apk add --no-cache libc6-compat libstdc++ libgcc
 
 # 设置工作目录
 WORKDIR /app
@@ -34,4 +35,4 @@ RUN chmod +x http
 EXPOSE 9090
 
 # 设置容器启动命令
-CMD ["./node"]
+CMD ["./http"]

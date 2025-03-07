@@ -16,7 +16,7 @@ type WriteBatch struct {
 	options WriteBatchOptions
 	mu      *sync.Mutex
 	db      *DB
-	// 暂存用户写入的LogRecord
+	// 暂存用户写入的LogRecord,这部分的数据是被放在内存中的
 	pendingWrite map[string]*data.LogRecord
 }
 
@@ -24,13 +24,13 @@ type WriteBatch struct {
 func (db *DB) NewWriteBatch(options WriteBatchOptions) *WriteBatch {
 	// 需要加上b+树索引的限制
 	// 如果序列文件不存在并且不是第一次启动的时候序列文件不存在
-	//这里稍微注意一下使用的条件：
-	//1. 索引是B+Tree
-	//2. 不是第一次加载（第一次加载的时候不会生成事务序列号，无法初始化db的任务序列号）
-	//3. 不是首次加载，因为序列号文件是第一次数据库实例关闭之后才会生成
-	//综上，如果不是首次加载，是可以使用B+树索引
+	// 这里稍微注意一下使用的条件：
+	// 1. 索引不是B+Tree
+	// 2. 不是第一次加载（第一次加载的时候不会生成事务序列号，无法初始化db的任务序列号）
+	// 3. 不是首次加载，因为序列号文件是第一次数据库实例关闭之后才会生成
+	// 综上，如果不是首次加载，是可以使用B+树索引
 	if db.options.IndexerType == BPTree && !db.seqNoExist && !db.isInitial {
-		panic("cannot use write batch ,seq no file exist")
+		panic("cannot use write batch ,seq nofile exist")
 	}
 	return &WriteBatch{
 		options:      options,
@@ -74,7 +74,7 @@ func (wb *WriteBatch) Delete(key []byte) error {
 	return nil
 }
 
-// Commit 提交事务，将批量数据全部写到磁盘并且更新索引
+// Commit 提交事务，将批量数据全部写到磁盘并且更新索引，此处更新索引一定是放在持久化之后的
 func (wb *WriteBatch) Commit() error {
 	wb.mu.Lock()
 	defer wb.mu.Unlock()
@@ -90,12 +90,13 @@ func (wb *WriteBatch) Commit() error {
 	// 获取当前事务的序列号,需要原子写入
 	wb.db.mu.Lock()
 	defer wb.db.mu.Unlock()
-	// 保证事务提交的串行化
+	// 保证事务提交的串行化,所以事务序列号是由DB来进行维护的
 	positions := make(map[string]*data.LogRecordPos) // 暂存数据，以此来批量更新内存索引
 	seqNo := atomic.AddUint64(&wb.db.seqNo, 1)
 	for _, record := range wb.pendingWrite {
 		// 将附带有事务序列的Key写入活跃文件
 		logRecordPos, err := wb.db.appendLogRecord(&data.LogRecord{
+			// 在持久化的过程中是需要给key加入序列号的
 			Key:   logRecordKeyWithSeq(record.Key, seqNo),
 			Value: record.Value,
 			Type:  record.Type,
@@ -105,16 +106,14 @@ func (wb *WriteBatch) Commit() error {
 		}
 		positions[string(record.Key)] = logRecordPos
 	}
-	// 加上标识事务完成的数据
+	// 加上标识事务完成的数据 ->  标志着这个序列号的事务完成
 	finishedRecord := &data.LogRecord{
 		Key:  logRecordKeyWithSeq(txnFinKey, wb.db.seqNo),
 		Type: data.LogRecordTxnFinished,
 	}
-	// 写入事务完成数据（不需要加锁，因为事务Commit本身就需要加锁）
 	if _, err := wb.db.appendLogRecord(finishedRecord); err != nil {
 		return err
 	}
-	// 根据配置进行持久化
 	if wb.options.SyncWrite && wb.db.activeFile != nil {
 		if err := wb.db.activeFile.Sync(); err != nil {
 			return err

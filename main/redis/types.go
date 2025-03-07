@@ -81,6 +81,7 @@ func (rds *RedisDataStructure) Get(key []byte) ([]byte, error) {
 }
 
 // ===================================Hash 数据结构===================================================
+// key ---> hashmap --->field标识不同的value，所以严格来说field才是"key"
 func (rds *RedisDataStructure) HSet(key, field, value []byte) (bool, error) {
 	// 先查找元数据
 	meta, err := rds.findMetadata(key, Hash)
@@ -90,7 +91,7 @@ func (rds *RedisDataStructure) HSet(key, field, value []byte) (bool, error) {
 	// 构造数据部分的key-->其实很好理解就是在这种情况下key和value都是一个复合体有多个不同的字段共同控制
 	hk := &hashInternalKey{
 		key:     key,
-		version: meta.version,
+		version: meta.version, // 用version来进行不同HashSet之间的区分
 		field:   field,
 	}
 	// 先判断数据是否存在
@@ -224,6 +225,8 @@ func (rds *RedisDataStructure) pushInner(key []byte, element []byte, isLeft bool
 	if err != nil {
 		return 0, err
 	}
+	// Hash 和 List 都有一个所谓的内部 key
+	// 这个key会记录一下未当前的index是啥
 	lk := &ListInternalKey{
 		key:     key,
 		version: meta.version,

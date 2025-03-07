@@ -20,7 +20,7 @@ func (db *DB) Merge() error {
 		return nil
 	}
 	db.mu.Lock()
-	// 同一个时刻只能有一个merge例程
+	// 同一个时刻只能有一个merge例程，这里其实就是用一个标识位
 	if db.isMerging {
 		db.mu.Unlock()
 		return ErrMergeIsProcessing
@@ -31,6 +31,7 @@ func (db *DB) Merge() error {
 		db.mu.Unlock()
 		return err2
 	}
+
 	if float32(db.reclaimSize)/float32(totalSize) < db.options.DataFileMergeRatio {
 		db.mu.Unlock()
 		return ErrMergeRatioUnreachable
@@ -58,7 +59,7 @@ func (db *DB) Merge() error {
 		db.mu.Unlock()
 		return err
 	}
-	// 将持久化文件转化为旧文件
+	// 将活跃文件转化为旧文件
 	db.olderFile[db.activeFile.FileId] = db.activeFile
 	// 打开新的活跃文件
 	if err := db.setActiveDataFile(); err != nil {
@@ -87,7 +88,6 @@ func (db *DB) Merge() error {
 			return err
 		}
 	}
-	// 新建一个merge path
 	if err := os.MkdirAll(mergePath, os.ModePerm); err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (db *DB) Merge() error {
 			IOManager: ioManager,
 		}
 	}
-	// 遍历每一个数据文件
+	// 遍历每一个数据文件，此处记住一下，merge文件并不只是一个呀
 	for _, dataFile := range mergeFiles {
 		var offset int64 = 0
 		for {
@@ -206,6 +206,7 @@ func (db *DB) loadMergeFiles() error {
 	var mergeFinished bool = false
 	var mergeFileName []string
 	for _, entry := range dirEntries {
+		// 判断merge在这个目录中是否完成， merge完成之后会在目录中放一个merge完成的文件标志
 		if entry.Name() == data.MergeFinishedFileName {
 			mergeFinished = true
 		}
@@ -228,6 +229,7 @@ func (db *DB) loadMergeFiles() error {
 	}
 	// 将旧的数据文件删掉(删除比nonMergeFileId更小的数据文件)
 	var fileId uint32 = 0
+	// 删除db中已经merge的datafile
 	for ; fileId < nonMergeFileId; fileId++ {
 		// 获取数据文件的名称并将后缀去掉转化为整数
 		fileName := data.GetDataFileName(db.options.DirPath, fileId)
@@ -240,7 +242,7 @@ func (db *DB) loadMergeFiles() error {
 		}
 	}
 
-	// 将新的数据文件（merge之后）移动到数据目录中去
+	// 将新的数据文件（merge之后）移动到数据目录中去，这里可能会有多个merge之后的数据文件
 	for _, fileName := range mergeFileName {
 		srcPath := filepath.Join(mergePath, fileName)
 		desPath := filepath.Join(db.options.DirPath, fileName)

@@ -1,9 +1,9 @@
 package match_method
 
 import (
-	"github.com/yanyiwu/gojieba" // GoJieba 分词库
 	"math"
 )
+import "github.com/yanyiwu/gojieba"
 
 // DocumentFrequency 用于存储单词的文档频率
 

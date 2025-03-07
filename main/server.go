@@ -17,6 +17,7 @@ type BitcaskServer struct {
 	opts   bitcask.ServerConfig
 }
 
+// 其实这个地方有一个比较有意思的想法就是多个数据库实例同时启动到不同的地方？把数据库改成成多实例系统的可行性？
 func main() {
 	// 打开 Redis 数据结构服务
 	redisDataStructure, err :=
@@ -62,7 +63,6 @@ func (svr *BitcaskServer) close(conn redcon.Conn, err error) {
 	}
 }
 
-// redis 协议解析的示例
 //func main() {
 //	conn, err := net.Dial("tcp", "localhost:6379")
 //	if err != nil {
@@ -80,4 +80,4 @@ func (svr *BitcaskServer) close(conn redcon.Conn, err error) {
 //		panic(err)
 //	}
 //	fmt.Printf(res)
-//}
+//}// redis 协议解析的示例

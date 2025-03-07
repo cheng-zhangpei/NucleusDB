@@ -45,6 +45,7 @@ func execClientCommand(conn redcon.Conn, cmd redcon.Command) {
 	default:
 		// 这里只有这里支持的命令
 		cmdFunc, ok := supportedCommands[command]
+		// cmdFunc -> 是这个列表中的函数指针
 		if !ok {
 			conn.WriteError("Err unsupported command: '" + command + "'")
 			return

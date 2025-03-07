@@ -11,6 +11,7 @@ type Options struct {
 	IndexerType        int8    // 内存索引类型
 	MMapAtStartUp      bool    // 是否采用内存映射加速数据库启动
 	DataFileMergeRatio float32 //数据文件合并的阈值
+	MaxWaterSize       uint64  // 最大的MVCC事务池中事务数量
 }
 
 type IteratorOptions struct {
@@ -57,6 +58,7 @@ var DefaultOptions = Options{
 	IndexerType:        BTree,
 	MMapAtStartUp:      true,
 	DataFileMergeRatio: 0.3,
+	MaxWaterSize:       5,
 }
 
 // DefaultIteratorOptions 一个默认的索引迭代器
