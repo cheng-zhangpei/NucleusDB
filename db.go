@@ -59,7 +59,7 @@ func Open(options Options) (*DB, error) {
 			return nil, err
 		}
 	}
-
+	// 加上文件锁
 	fileLock := flock.New(filepath.Join(options.DirPath, data.FileLockName))
 	lock, err2 := fileLock.TryLock()
 	if err2 != nil {
@@ -429,6 +429,7 @@ func checkOption(options Options) error {
 	return nil
 }
 
+// loadDataFiles 将数据库数据目录信息加载到DB中
 func (db *DB) loadDataFiles() error {
 	// 根据配置项将配置读取出来
 	dirEntries, err := os.ReadDir(db.options.DirPath)
@@ -515,6 +516,7 @@ func (db *DB) loadIndexFromDataFiles() error {
 		var fileId = uint32(fid)
 		// 如果比最近未参与 merge 的文件 id 更小，则说明已经从 Hint 文件中加载索引了
 		if hasMerge && fileId < nonMergeFileId {
+			// 说人话就是已经经过之前loadHintFile处理的文件
 			continue
 		}
 		var dataFile *data.DataFile
@@ -537,13 +539,14 @@ func (db *DB) loadIndexFromDataFiles() error {
 			// 构造内存索引并保存
 			logRecordPos := &data.LogRecordPos{Fid: fileId, Offset: offset, Size: size}
 
-			// 解析 key，拿到事务序列号
+			// 解析 key，拿到事务序列号，在加载数据文件的时候要保证事务
 			realKey, seqNo := parseLogRecordKey(logRecord.Key)
 			if seqNo == nonTransactionSeqNo {
 				// 非事务操作，直接更新内存索引
 				updateIndex(realKey, logRecord.Type, logRecordPos)
 			} else {
 				// 事务完成，对应的 seq no 的数据可以更新到内存索引中
+				// 用了一个专门的type来标识事务是否完成
 				if logRecord.Type == data.LogRecordTxnFinished {
 					for _, txnRecord := range transactionRecords[seqNo] {
 						updateIndex(txnRecord.Record.Key, txnRecord.Record.Type, txnRecord.Pos)
@@ -573,11 +576,12 @@ func (db *DB) loadIndexFromDataFiles() error {
 		}
 	}
 
-	// 更新事务序列号
+	// 更新事务序列号, 所以获取事务的序列号是在获取索引的过程中获得的
 	db.seqNo = uint64(currentSeqNo)
 	return nil
 }
 
+// 这里就是专门用一个文件来保存B+树的序列号，如果是持久化索引不需要在内存中构建
 func (db *DB) loadSeqNo() error {
 	fileName := filepath.Join(db.options.DirPath, data.SeqNoFileName)
 	if _, err := os.Stat(fileName); os.IsNotExist(err) {
