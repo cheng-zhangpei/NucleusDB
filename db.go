@@ -4,6 +4,7 @@ import (
 	"ComDB/data"
 	"ComDB/fio"
 	"ComDB/index"
+	"ComDB/transaction"
 	"ComDB/utils"
 	"errors"
 	"fmt"
@@ -619,4 +620,20 @@ func (db *DB) resetIoType() error {
 		}
 	}
 	return nil
+}
+
+func (db *DB) Update(fn func(txn *transaction.Txn) error) error {
+	// 创建一个事务, true 为可更新.
+	txn := transaction.NewTxn()
+
+	// 延后执行安全销毁
+	defer txn.Discard()
+
+	// 调用传入的 fn, 传入 txn
+	if err := fn(txn); err != nil {
+		return err
+	}
+
+	// 提交事务
+	return txn.Commit()
 }
