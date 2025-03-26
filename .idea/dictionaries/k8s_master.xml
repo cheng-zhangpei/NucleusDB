@@ -4,6 +4,7 @@
       <w>bitcask</w>
       <w>bptree</w>
       <w>ents</w>
+      <w>hascode</w>
       <w>jieba</w>
       <w>metadate</w>
       <w>varint</w>

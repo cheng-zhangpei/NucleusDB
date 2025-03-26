@@ -16,4 +16,6 @@ var (
 	ErrMemoryMetaNotFound     = errors.New("memory meta error")
 	ErrCompressNumNotEnough   = errors.New("compress num not enough")
 	ErrTimestampNotExist      = errors.New("timestamp not exist in the memory")
+	ErrEmptyPending           = errors.New("the pending area is empty")
+	ErrConflict               = errors.New("the transaction has conflict key!")
 )
