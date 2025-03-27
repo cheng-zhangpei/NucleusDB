@@ -18,4 +18,8 @@ var (
 	ErrTimestampNotExist      = errors.New("timestamp not exist in the memory")
 	ErrEmptyPending           = errors.New("the pending area is empty")
 	ErrConflict               = errors.New("the transaction has conflict key!")
+	ErrTxnSnapshotSaveFailed  = errors.New("transaction snapshot save failed")
+	ErrTxnNotFound            = errors.New("transaction not found")
+	ErrDecodeTxnError         = errors.New("decode transaction error")
+	ErrGC                     = errors.New("GC ERR!")
 )

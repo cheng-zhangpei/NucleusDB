@@ -11,6 +11,7 @@ import (
 	_ "go/ast"
 	_ "gopkg.in/check.v1"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -76,8 +77,7 @@ func Open(options Options) (*DB, error) {
 	if len(dir) == 0 {
 		isInitial = true
 	}
-	// 初始化事务监控实例
-	update := NewUpdate()
+
 	// 初始化db
 	db := &DB{
 		options:   options,
@@ -86,7 +86,7 @@ func Open(options Options) (*DB, error) {
 		index:     index.NewIndexer(options.IndexerType, options.DirPath, options.SyncWrite),
 		isInitial: isInitial,
 		fileLock:  fileLock,
-		update:    update,
+		update:    nil,
 	}
 	// 加载merge数据目录
 	if err := db.loadMergeFiles(); err != nil {
@@ -622,21 +622,4 @@ func (db *DB) resetIoType() error {
 		}
 	}
 	return nil
-}
-
-func (db *DB) Update(fn func(txn *Txn) error) ([]string, error) {
-	// 创建一个事务
-	txn := NewTxn(db)
-	// 执行事务内部逻辑
-	if err := fn(txn); err != nil {
-		return nil, err
-	}
-	// 将事务提交,
-	db.update.UpMu.Lock()
-	ReadResult, err := txn.Commit(db.update.Watermark, db.update.Tracker)
-	if err != nil {
-		return nil, err
-	}
-	db.update.UpMu.Unlock()
-	return ReadResult, nil
 }

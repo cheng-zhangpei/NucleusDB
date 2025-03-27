@@ -1,6 +1,8 @@
 package ComDB
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+)
 
 // 此处暂时的设计目标是结合raft共识算法实现一个MVCC的分布式事务机制，需要先实现单机的MVCC机制并经过测试才可以做分布式事务的相关功能
 
@@ -118,11 +120,16 @@ func (txn *Txn) Commit(wm *watermark, tk *tracker) ([]string, error) {
 	if len(txn.pendingWrite) == 0 && len(txn.pendingReads) == 0 {
 		return nil, ErrEmptyPending
 	}
+	// 注意一下事务结束之后是会释放空间的，所以tracker的数据是只能追踪现在还在运行的数据
 	defer txn.Discard()
 	// 提交事务
 	err := txn.actualCommit(wm, tk)
 	if err != nil {
 		return nil, err
+	}
+	// 保存版本快照
+	if err := saveSnapshot(txn); err != nil {
+		return nil, ErrTxnSnapshotSaveFailed
 	}
 	if len(txn.getResult) == 0 {
 		return nil, nil
@@ -170,9 +177,12 @@ func (txn *Txn) hasConflict(wm *watermark, tk *tracker) bool {
 	for key, _ := range txn.pendingReads {
 		txn.conflictKeys[key] = struct{}{}
 	}
+
 	// 获取到具体的事务
 	for _, txnTime := range maybeConflictTxn {
-		if tempTxn, exists := tk.waterToTxn[txnTime]; exists {
+		// 快照的具体数据需要从数据库中拿取
+		tempTxn, _ := loadSnapshotByTime(txnTime, txn.db)
+		if _, exists := tk.waterToTxn[txnTime]; exists {
 			// 收集该事务的所有写操作(包括重复写入)
 			for hash := range tempTxn.pendingWrite {
 				conflictWriteSet[hash] = struct{}{}

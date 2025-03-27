@@ -2,6 +2,7 @@ package ComDB
 
 import (
 	"github.com/emirpasic/gods/queues/priorityqueue"
+	"log"
 	"sort"
 )
 
@@ -14,15 +15,19 @@ type watermark struct {
 	conflictKeys map[uint64][]byte
 	// 最大堆限制大小
 	maxSize uint64
+	// 垃圾回收通道-> 在update中专门开一个go routine来进行过期事务回收
+	gcChannel chan uint64
 }
 
-func newWatermark(maxSize uint64) *watermark {
+func newWatermark(maxSize uint64, db *DB) *watermark {
 	pq := priorityqueue.NewWith(UInt64Comparator) // 使用自定义比较器
 	ConflictKeys := make(map[uint64][]byte, 10)
+	gcc := make(chan uint64, 10)
 	return &watermark{
 		pq,
 		ConflictKeys,
 		maxSize,
+		gcc,
 	}
 }
 
@@ -40,9 +45,21 @@ func UInt64Comparator(a, b interface{}) int {
 	}
 }
 
-// 添加事务
 func (w *watermark) addCommitTime(commitTime uint64) {
 	w.timesHeap.Enqueue(commitTime)
+
+	// 如果堆大小超过 maxSize，移除最旧元素（堆顶）
+	if uint64(w.timesHeap.Size()) > w.maxSize {
+		oldest, _ := w.timesHeap.Dequeue()
+		oldestTime := oldest.(uint64)
+
+		// 发送到 GC 通道（非阻塞，避免死锁）
+		select {
+		case w.gcChannel <- oldestTime:
+		default:
+			log.Println("GC channel is full, dropped timestamp:", oldestTime)
+		}
+	}
 }
 
 func (w *watermark) getLatestCommitTime() uint64 {
