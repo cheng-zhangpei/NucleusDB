@@ -43,6 +43,7 @@ func NewTxn(db *DB) *Txn {
 		pendingWrite:        make(map[uint64]*operation),
 		pendingRepeatWrites: make(map[uint64]*operation),
 		pendingReads:        make(map[uint64]*operation),
+		conflictKeys:        make(map[uint64]struct{}),
 		getResult:           make([]string, 0),
 		startWatermark:      startTime,
 		commitTime:          0,
@@ -51,7 +52,7 @@ func NewTxn(db *DB) *Txn {
 }
 
 // Set 写入数据
-func (txn *Txn) Set(key, value []byte) error {
+func (txn *Txn) Put(key, value []byte) error {
 	hash := generateHashCode(key)
 
 	op := &operation{
@@ -202,25 +203,26 @@ func (txn *Txn) hasConflict(wm *watermark, tk *tracker) bool {
 }
 
 // 解析命令并执行
+// todo 不同的事务直接被完全的隔离开来了
 func (txn *Txn) cmdExecutor(seqNo uint64) error {
 	for _, op := range txn.operations {
 		switch op.cmd {
 		case "PUT":
-			enkey := logRecordKeyWithSeq(op.key, seqNo)
-			if err := txn.db.Put(enkey, op.value); err != nil {
+			//enkey := logRecordKeyWithSeq(op.key, seqNo)
+			if err := txn.db.Put(op.key, op.value); err != nil {
 				return err
 			}
 		case "GET":
-			enkey, _ := parseLogRecordKey(op.key)
-			value, err := txn.db.Get(enkey)
+			//enkey := logRecordKeyWithSeq(op.key, seqNo)
+			value, err := txn.db.Get(op.key)
 			if err != nil {
 				return err
 			} else {
 				txn.getResult = append(txn.getResult, string(value))
 			}
 		case "DELETE":
-			enkey := logRecordKeyWithSeq(op.key, seqNo)
-			if err := txn.db.Delete(enkey); err != nil {
+			//enkey := logRecordKeyWithSeq(op.key, seqNo)
+			if err := txn.db.Delete(op.key); err != nil {
 				return err
 			}
 		}

@@ -283,7 +283,7 @@ func extendBuf(buf []byte, need int) []byte {
 
 func saveSnapshot(txn *Txn) error {
 	encodeTxn := EncodeTxn(txn)
-	txnKey := fmt.Sprintf("%s-%u", MVCC_SNAPSHOT_PREFIX, txn.commitTime)
+	txnKey := fmt.Sprintf("%s-%d", MVCC_SNAPSHOT_PREFIX, txn.commitTime)
 	if err := txn.db.Put([]byte(txnKey), encodeTxn); err != nil {
 		return err
 	}
@@ -323,7 +323,7 @@ func loadAllSnapshot(maxSize uint64, db *DB) []*Txn {
 // 返回找到的事务快照指针，如果没有找到则返回错误
 func loadSnapshotByTime(timestamp uint64, db *DB) (*Txn, error) {
 	// 构造要查找的key前缀
-	prefix := fmt.Sprintf("%s-%u", MVCC_SNAPSHOT_PREFIX, timestamp)
+	prefix := fmt.Sprintf("%s-%d", MVCC_SNAPSHOT_PREFIX, timestamp)
 
 	// 使用精确匹配查找
 	value, err := db.Get([]byte(prefix))
@@ -341,7 +341,7 @@ func loadSnapshotByTime(timestamp uint64, db *DB) (*Txn, error) {
 }
 
 func deleteSnapshotByTime(timestamp uint64, db *DB) error {
-	deleteKey := fmt.Sprintf("%s-%u", MVCC_SNAPSHOT_PREFIX, timestamp)
+	deleteKey := fmt.Sprintf("%s-%d", MVCC_SNAPSHOT_PREFIX, timestamp)
 	if err := db.Delete([]byte(deleteKey)); err != nil {
 		return err
 	}

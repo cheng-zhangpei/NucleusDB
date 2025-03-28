@@ -26,6 +26,7 @@ func NewUpdate(maxSize uint64, db *DB) *Update {
 		Watermark: watermark,
 		Tracker:   tracker,
 		db:        db,
+		UpMu:      new(sync.RWMutex),
 	}
 	// 启动垃圾回收线程
 	go update.GC()

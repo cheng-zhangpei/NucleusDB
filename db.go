@@ -11,7 +11,6 @@ import (
 	_ "go/ast"
 	_ "gopkg.in/check.v1"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
