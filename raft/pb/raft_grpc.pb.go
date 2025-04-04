@@ -4,7 +4,7 @@
 // - protoc             v3.12.4
 // source: raft.proto
 
-package pb
+package __
 
 import (
 	context "context"
@@ -19,7 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Raft_SendMessage_FullMethodName = "/pb.Raft/SendMessage"
+	Raft_SendMessage_FullMethodName           = "/pb.Raft/SendMessage"
+	Raft_CommitTransaction_FullMethodName     = "/pb.Raft/CommitTransaction"
+	Raft_CompensateTransaction_FullMethodName = "/pb.Raft/CompensateTransaction"
 )
 
 // RaftClient is the client API for Raft service.
@@ -29,6 +31,9 @@ const (
 // Raft RPC service
 type RaftClient interface {
 	SendMessage(ctx context.Context, in *Message, opts ...grpc.CallOption) (*Message, error)
+	// 新增事务专用接口
+	CommitTransaction(ctx context.Context, in *TransactionPackage, opts ...grpc.CallOption) (*TxnResponse, error)
+	CompensateTransaction(ctx context.Context, in *CompensationTrigger, opts ...grpc.CallOption) (*TxnResponse, error)
 }
 
 type raftClient struct {
@@ -49,6 +54,26 @@ func (c *raftClient) SendMessage(ctx context.Context, in *Message, opts ...grpc.
 	return out, nil
 }
 
+func (c *raftClient) CommitTransaction(ctx context.Context, in *TransactionPackage, opts ...grpc.CallOption) (*TxnResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TxnResponse)
+	err := c.cc.Invoke(ctx, Raft_CommitTransaction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftClient) CompensateTransaction(ctx context.Context, in *CompensationTrigger, opts ...grpc.CallOption) (*TxnResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TxnResponse)
+	err := c.cc.Invoke(ctx, Raft_CompensateTransaction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RaftServer is the server API for Raft service.
 // All implementations must embed UnimplementedRaftServer
 // for forward compatibility.
@@ -56,6 +81,9 @@ func (c *raftClient) SendMessage(ctx context.Context, in *Message, opts ...grpc.
 // Raft RPC service
 type RaftServer interface {
 	SendMessage(context.Context, *Message) (*Message, error)
+	// 新增事务专用接口
+	CommitTransaction(context.Context, *TransactionPackage) (*TxnResponse, error)
+	CompensateTransaction(context.Context, *CompensationTrigger) (*TxnResponse, error)
 	mustEmbedUnimplementedRaftServer()
 }
 
@@ -68,6 +96,12 @@ type UnimplementedRaftServer struct{}
 
 func (UnimplementedRaftServer) SendMessage(context.Context, *Message) (*Message, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendMessage not implemented")
+}
+func (UnimplementedRaftServer) CommitTransaction(context.Context, *TransactionPackage) (*TxnResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CommitTransaction not implemented")
+}
+func (UnimplementedRaftServer) CompensateTransaction(context.Context, *CompensationTrigger) (*TxnResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CompensateTransaction not implemented")
 }
 func (UnimplementedRaftServer) mustEmbedUnimplementedRaftServer() {}
 func (UnimplementedRaftServer) testEmbeddedByValue()              {}
@@ -108,6 +142,42 @@ func _Raft_SendMessage_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Raft_CommitTransaction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransactionPackage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).CommitTransaction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Raft_CommitTransaction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).CommitTransaction(ctx, req.(*TransactionPackage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Raft_CompensateTransaction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompensationTrigger)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).CompensateTransaction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Raft_CompensateTransaction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).CompensateTransaction(ctx, req.(*CompensationTrigger))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Raft_ServiceDesc is the grpc.ServiceDesc for Raft service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -118,6 +188,14 @@ var Raft_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendMessage",
 			Handler:    _Raft_SendMessage_Handler,
+		},
+		{
+			MethodName: "CommitTransaction",
+			Handler:    _Raft_CommitTransaction_Handler,
+		},
+		{
+			MethodName: "CompensateTransaction",
+			Handler:    _Raft_CompensateTransaction_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

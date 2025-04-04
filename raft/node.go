@@ -2,7 +2,7 @@ package raft
 
 import (
 	"ComDB"
-	"ComDB/raft/pb"
+	_ "ComDB/raft/pb"
 	"ComDB/raft/tracker"
 	"ComDB/search"
 	"context"

@@ -2,14 +2,25 @@ syntax = "proto3";
 package pb;
 option go_package = ".";
 // Raft message types
-
+// 补偿触发指令
+message CompensationTrigger {
+  string original_txn_id = 1;  // 原始事务ID
+  uint64 trigger_term = 2;     // 触发补偿的任期
+  string reason = 3;           // 补偿原因(冲突/超时等)
+}
 
 // Core data structures
 message Entry {
   uint64 term = 1;
   uint64 index = 2;
   string type = 3; // EntryNormal or EntryConfChange
-  bytes data = 4;
+  oneof payload {
+    bytes raw_data = 4;        // 原始数据负载
+    TransactionPackage txn = 5; // 事务数据包
+    CompensationTrigger comp = 6; // 补偿触发指令
+  }
+  // 版本控制增强
+  uint64 data_version = 7;
 }
 
 message Snapshot {
@@ -33,17 +44,49 @@ message ConfChange {
   uint64 node_id = 2;
   bytes context = 3;
 }
+
+// 事务操作类型扩展
+enum OperationType {
+  OP_UNKNOWN = 0;
+  OP_PUT = 1;
+  OP_DELETE = 2;
+  OP_COMPENSATION_PUT = 3;  // 补偿PUT操作
+  OP_COMPENSATION_DELETE = 4; // 补偿DELETE操作
+}
+
+// 事务操作单元
+message TxnOperation {
+  string key = 1;
+  bytes value = 2;
+  OperationType op_type = 3;
+  map<string, bytes> metadata = 4; // 扩展元数据
+}
+
+// 完整事务包
+message TransactionPackage {
+  string txn_id = 1;          // 全局唯一事务ID
+  uint64 timestamp = 2;       // 混合授时时间戳
+  uint64 expected_version = 3; // 用于MVCC的版本控制
+  bool is_compensation = 4;   // 是否补偿事务
+  repeated TxnOperation operations = 5;
+  repeated TxnOperation compensation_ops = 6; // 预定义的补偿操作
+}
+
+
 enum MessageType {
-  MsgHup             = 0;  // Trigger election
-  MsgBeat            = 1;  // Heartbeat
-  MsgProp            = 2;  // Propose log entry
-  MsgApp             = 3;  // Append log entries
-  MsgAppResp         = 4;  // Response to append
-  MsgVote            = 5;  // Request vote
-  MsgVoteResp        = 6;  // Response to vote
-  MsgSnap            = 7;  // Install snapshot
-  MsgHeartbeat       = 8;  // Leader heartbeat
-  MsgHeartbeatResp   = 9;  // Response to heartbeat
+  MsgHup = 0;  // Trigger election
+  MsgBeat = 1;  // Heartbeat
+  MsgProp = 2;  // Propose log entry
+  MsgApp = 3;  // Append log entries
+  MsgAppResp = 4;  // Response to append
+  MsgVote = 5;  // Request vote
+  MsgVoteResp = 6;  // Response to vote
+  MsgSnap = 7;  // Install snapshot
+  MsgHeartbeat = 8;  // Leader heartbeat
+  MsgHeartbeatResp = 9;  // Response to heartbeat
+  MsgCommitTxn = 10; // Txn request
+  MsgCommitTxnResp = 11; // Txn commit response
+  MsgCompensation = 12; // Compensation txn trigger
 }
 
 message Message {
@@ -59,9 +102,66 @@ message Message {
   bool reject = 11;
   bytes context = 12;
   uint64 logTerm = 13;
+  // 事务相关扩展
+  string txn_context_id = 14;          // 事务上下文ID
+  TransactionPhase txn_phase = 15;     // 事务阶段
+
+}
+// ---------------------------
+// 新增枚举类型
+// ---------------------------
+enum EntryType {
+  ENTRY_NORMAL = 0;
+  ENTRY_CONF_CHANGE = 1;
+  ENTRY_TXN = 2;
+  ENTRY_TXN_COMPENSATION = 3;
 }
 
+enum TransactionPhase {
+  PHASE_UNKNOWN = 0;
+  PHASE_PREPARE = 1;
+  PHASE_COMMIT = 2;
+  PHASE_COMPENSATE = 3;
+  PHASE_ACK = 4;
+}
 // Raft RPC service
 service Raft {
   rpc SendMessage(Message) returns (Message);
+  // 新增事务专用接口
+  rpc CommitTransaction(TransactionPackage) returns (TxnResponse);
+  rpc CompensateTransaction(CompensationTrigger) returns (TxnResponse);
 }
+
+message TxnResponse {
+  bool success = 1;
+  string txn_id = 2;
+  repeated uint64 conflicted_nodes = 3;
+  string error_detail = 4;
+}
+/* Txn Message example
+Message {
+  type: MsgCommitTxn
+  txn_context_id: "txn-12345"
+  txn_phase: PHASE_COMMIT
+  entries: [
+    Entry {
+      entry_type: ENTRY_TXN
+      txn: {
+        meta: {
+          txn_id: "txn-12345"
+          timestamp: 1678901234
+          expected_version: 5
+        }
+        operations: [
+          {key: "user-1", op_type: OP_PUT, value: "{\"name\":\"Alice\"}"},
+          {key: "order-1", op_type: OP_PUT, value: "{\"amount\":100}"}
+        ]
+        compensation_ops: [
+          {key: "user-1", op_type: OP_COMPENSATION_DELETE},
+          {key: "order-1", op_type: OP_COMPENSATION_DELETE}
+        ]
+      }
+    }
+  ]
+}
+*/
