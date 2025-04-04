@@ -21,6 +21,7 @@ message Entry {
   }
   // 版本控制增强
   uint64 data_version = 7;
+  bytes data = 8;
 }
 
 message Snapshot {
