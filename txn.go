@@ -116,7 +116,7 @@ func (txn *Txn) Discard() {
 }
 
 // Commit 提交数据，这个函数是事务的核心
-func (txn *Txn) Commit(wm *watermark, tk *tracker) ([]string, error) {
+func (txn *Txn) Commit(wm *Watermark, tk *tracker) ([]string, error) {
 	// 判断事务是否合法
 	if len(txn.pendingWrite) == 0 && len(txn.pendingReads) == 0 {
 		return nil, ErrEmptyPending
@@ -140,7 +140,7 @@ func (txn *Txn) Commit(wm *watermark, tk *tracker) ([]string, error) {
 }
 
 // 需要加锁保证Commit部分绝对不能被抢占
-func (txn *Txn) actualCommit(wm *watermark, tk *tracker) error {
+func (txn *Txn) actualCommit(wm *Watermark, tk *tracker) error {
 	if txn.hasConflict(wm, tk) {
 		// 暂时不提供回滚机制就直接将数据从内存中删除
 		txn.Discard()
@@ -167,7 +167,7 @@ func (txn *Txn) actualCommit(wm *watermark, tk *tracker) error {
 // todo 使用布隆过滤器快速检查冲突
 // todo 如果事务的大小超过一个阈值则启动分区并行事务检查
 
-func (txn *Txn) hasConflict(wm *watermark, tk *tracker) bool {
+func (txn *Txn) hasConflict(wm *Watermark, tk *tracker) bool {
 	// 生成当前的时间戳
 	commitedTs := getCurrentime()
 	txn.commitTime = commitedTs

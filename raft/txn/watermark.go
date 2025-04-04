@@ -1,4 +1,6 @@
-package ComDB
+package txn
+
+// 与ComDB中的水位线机制不同，这里的水位线管理以zk作为存储标准
 
 import (
 	"github.com/emirpasic/gods/queues/priorityqueue"
@@ -8,7 +10,7 @@ import (
 
 // 维护水位线操作，用堆来进行标识，以时间作为衡量标准来建立最小堆-> 堆顶是距离现在最久的元素,这个是最小堆
 
-type Watermark struct {
+type watermark struct {
 	//用于维护水位线的最大堆，
 	timesHeap *priorityqueue.Queue
 	//用于将堆中维护可能发生冲突的键的列表
@@ -19,11 +21,11 @@ type Watermark struct {
 	gcChannel chan uint64
 }
 
-func NewWatermark(maxSize uint64, db *DB) *Watermark {
+func NewWatermark(maxSize uint64) *watermark {
 	pq := priorityqueue.NewWith(UInt64Comparator) // 使用自定义比较器
 	ConflictKeys := make(map[uint64][]byte, 10)
 	gcc := make(chan uint64, 10)
-	return &Watermark{
+	return &watermark{
 		pq,
 		ConflictKeys,
 		maxSize,
@@ -45,7 +47,7 @@ func UInt64Comparator(a, b interface{}) int {
 	}
 }
 
-func (w *Watermark) addCommitTime(commitTime uint64) {
+func (w *watermark) addCommitTime(commitTime uint64) {
 	w.timesHeap.Enqueue(commitTime)
 
 	// 如果堆大小超过 maxSize，移除最旧元素（堆顶）
@@ -62,14 +64,14 @@ func (w *Watermark) addCommitTime(commitTime uint64) {
 	}
 }
 
-func (w *Watermark) getLatestCommitTime() uint64 {
+func (w *watermark) getLatestCommitTime() uint64 {
 	if w.timesHeap.Empty() {
 		return 0 // 如果堆为空，返回 0
 	}
 	value, _ := w.timesHeap.Peek()
 	return value.(uint64)
 }
-func (w *Watermark) removeLatestCommitTime() {
+func (w *watermark) removeLatestCommitTime() {
 	if !w.timesHeap.Empty() {
 		w.timesHeap.Dequeue()
 	}
@@ -77,7 +79,7 @@ func (w *Watermark) removeLatestCommitTime() {
 
 // GetTimeRange 获取所有在 [minTime, maxTime] 范围内的时间戳切片
 // 注意：返回的切片按时间升序排列
-func (w *Watermark) GetTimeRange(minTime, maxTime uint64) []uint64 {
+func (w *watermark) GetTimeRange(minTime, maxTime uint64) []uint64 {
 	if w.timesHeap.Empty() {
 		return nil
 	}
@@ -112,6 +114,5 @@ func (w *Watermark) GetTimeRange(minTime, maxTime uint64) []uint64 {
 	sort.Slice(result, func(i, j int) bool {
 		return result[i] < result[j]
 	})
-
 	return result
 }

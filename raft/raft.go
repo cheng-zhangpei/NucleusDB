@@ -5,6 +5,7 @@ import (
 	"ComDB/raft/pb"
 	"ComDB/raft/tracker"
 	_ "ComDB/raft/tracker"
+	"ComDB/raft/txn"
 	_ "bytes"
 	"errors"
 	"fmt"
@@ -70,6 +71,7 @@ type RaftConfig struct {
 	TickInterval              time.Duration `yaml:"tick_interval" env:"TICK_INTERVAL"`
 	HttpServerAddr            string        `yaml:"http_server_addr" env:"HTTP_SERVER_ADDR"`
 	InflghtsMaxSize           int           `yaml:"inflghts_max_size" env:"INFLIGHTS_MAX_SIZE"`
+	zkAddr                    string        `yaml:"zkAddr" env:"ZKADDR"`
 }
 
 // validate raft config validation
@@ -133,6 +135,8 @@ type raft struct {
 	processTracker *tracker.ProgressTracker
 	status         BaseStatus
 	app            *application
+	coordinator    *txn.Coordinator
+	leaseManager   *txn.TimestampLeaseManager
 }
 
 func newRaft(config *RaftConfig, options ComDB.Options) *raft {
@@ -148,9 +152,12 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 	//if err != nil {
 	//	panic(err)
 	//}
+	coordinator := txn.NewCoordinator(config.zkAddr)
 	electionTimeout := configElectionTimeout(config.TickInterval)
 	heartbeatTimeout := configHeartbeatTimeout(time.Duration(electionTimeout), config.TickInterval)
 	appl, err := newApplication(options, config.ID)
+	zkConn := txn.NewZookeeperConn([]string{config.zkAddr}, 5*time.Second, nil)
+	leaseManager := txn.NewTimestampLeaseManager(zkConn, "")
 	if err != nil {
 		panic(err)
 	}
@@ -171,6 +178,8 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 		heartbeatTimeout:   uint64(heartbeatTimeout),
 		checkQuorum:        config.CheckQuorum,
 		app:                appl,
+		coordinator:        coordinator,
+		leaseManager:       leaseManager,
 	}
 	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
 	// 需要对processTracker进行初始化
@@ -606,6 +615,7 @@ func (r *raft) Step(msg *pb.Message) error {
 // startElection触发选举流程，使当前节点转变为候选者并开始新的选举。
 // only candidate
 func (r *raft) startElection(msg *pb.Message) {
+	log.Printf("node[%d]start election!\n", r.id)
 	if r.state == StateLeader {
 		log.Printf("the node already is leader")
 		return
@@ -747,6 +757,25 @@ func (r *raft) bcastAppend() {
 			return
 		}
 		r.sendAppend(id)
+	})
+}
+func (r *raft) bcastTxnMessage(TxnContextId string, TxnPackage *pb.TransactionPackage, Phase pb.TransactionPhase) {
+	r.processTracker.Visit(func(id uint64, _ *tracker.Progress) {
+		if id == r.id {
+			return
+		}
+		var msgType pb.MessageType = pb.MessageType_MsgCommitTxn
+		// 构造事务CommitRequest
+		msg := &pb.Message{
+			Type:         msgType,
+			From:         r.id,
+			To:           id,
+			Term:         r.Term,
+			TxnPhase:     Phase,
+			TxnContextId: TxnContextId,
+			TxnPackage:   TxnPackage,
+		}
+		r.send(msg)
 	})
 }
 
@@ -938,4 +967,18 @@ func getCommand(ent []*pb.Entry) []*applyEntry {
 		result = append(result, applyEnt)
 	}
 	return result
+}
+
+// sendTxnRequest Leader处理事务机制
+func (r *raft) sendTxnRequest(msg *pb.Message) {
+	TxnContextId := msg.TxnContextId
+	TxnPackage := msg.TxnPackage
+	Phase := msg.TxnPhase
+	// 广播事务数据
+	r.bcastTxnMessage(TxnContextId, TxnPackage, Phase)
+}
+
+// follower 对
+func (r *raft) handleTxnRequest(msg *pb.Message) {
+
 }

@@ -1,48 +1,12 @@
-package ComDB
+package txn
 
 import (
 	"encoding/binary"
-	"fmt"
-	"log"
-	"sort"
-	"time"
-)
-import (
 	"hash/fnv"
 )
 
-// 获取当前的水位线
-func getCurrentime() uint64 {
-	timestampSec := uint64(time.Now().Unix())
-	return timestampSec
-}
-
-func generateHashCode(key []byte) uint64 {
-	h := fnv.New64a()
-	_, err := h.Write(key)
-	if err != nil {
-		return 0
-	}
-	return h.Sum64()
-}
-
-// Uint64ToBytesBinary 使用 binary 包编码
-func Uint64ToBytesBinary(num uint64, order binary.ByteOrder) []byte {
-	buf := make([]byte, 8)
-	order.PutUint64(buf, num)
-	return buf
-}
-
-// BytesToUint64Binary 使用 binary 包解码
-func BytesToUint64Binary(b []byte, order binary.ByteOrder) uint64 {
-	if len(b) != 8 {
-		log.Panicf("字节切片长度必须为8，实际为%d", len(b))
-	}
-	return order.Uint64(b)
-}
-
 // EncodeTxn 编码入口函数
-func EncodeTxn(txn *Txn) []byte {
+func EncodeTxn(txn *TxnSnapshot) []byte {
 	buf := make([]byte, 16) // 初始分配16字节（足够存放头信息）
 	var index int
 
@@ -58,7 +22,6 @@ func EncodeTxn(txn *Txn) []byte {
 	buf = encodeMap(buf, &index, txn.pendingReads)
 	buf = encodeConflictKeys(buf, &index, txn.conflictKeys)
 	buf = encodeOperations(buf, &index, txn.operations)
-	buf = encodeStrings(buf, &index, txn.getResult)
 
 	return buf[:index]
 }
@@ -148,8 +111,8 @@ func encodeStrings(buf []byte, index *int, strs []string) []byte {
 }
 
 // 解码逻辑
-func DecodeTxn(data []byte) *Txn {
-	txn := &Txn{
+func DecodeTxn(data []byte) *TxnSnapshot {
+	txn := &TxnSnapshot{
 		pendingWrite:        make(map[uint64]*operation),
 		pendingRepeatWrites: make(map[uint64]*operation),
 		pendingReads:        make(map[uint64]*operation),
@@ -170,7 +133,6 @@ func DecodeTxn(data []byte) *Txn {
 	txn.pendingReads = decodeMap(data, &index)
 	txn.conflictKeys = decodeConflictKeys(data, &index)
 	txn.operations = decodeOperations(data, &index)
-	txn.getResult = decodeStrings(data, &index)
 	return txn
 }
 
@@ -280,69 +242,26 @@ func extendBuf(buf []byte, need int) []byte {
 	return newBuf
 }
 
-func saveSnapshot(txn *Txn) error {
-	encodeTxn := EncodeTxn(txn)
-	txnKey := fmt.Sprintf("%s-%d", MVCC_SNAPSHOT_PREFIX, txn.commitTime)
-	if err := txn.db.Put([]byte(txnKey), encodeTxn); err != nil {
-		return err
-	}
-	return nil
-}
-
-// 这个函数主要是数据库重启的时候重启MVCC事务机制
-func loadAllSnapshot(maxSize uint64, db *DB) []*Txn {
-	iterator := db.NewIterator(IteratorOptions{
-		Prefix:  []byte(MVCC_SNAPSHOT_PREFIX),
-		Reverse: false, // 是否反向遍历
-	})
-	defer iterator.Close()
-
-	// 这里取出所有的事务快照
-	Txns := make([]*Txn, 0)
-	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
-		key := iterator.Key()
-		value, err := db.Get(key)
-		if err != nil {
-			log.Printf("Failed to get value for key %s: %v\n", string(key), err)
-			continue
-		}
-		Txns = append(Txns, DecodeTxn(value))
-	}
-	// 降序排列
-	sort.Slice(Txns, func(i, j int) bool {
-		return Txns[i].commitTime > Txns[j].commitTime
-	})
-	retainCount := min(int(maxSize), len(Txns))
-	retained := Txns[:retainCount]
-	return retained
-}
-
-// loadSnapshotByTime 根据时间戳加载对应的事务快照
-// 参数 timestamp 是要查找的事务提交时间
-// 返回找到的事务快照指针，如果没有找到则返回错误
-func loadSnapshotByTime(timestamp uint64, db *DB) (*Txn, error) {
-	// 构造要查找的key前缀
-	prefix := fmt.Sprintf("%s-%d", MVCC_SNAPSHOT_PREFIX, timestamp)
-
-	// 使用精确匹配查找
-	value, err := db.Get([]byte(prefix))
+// // 这个函数主要是数据库重启的时候重启MVCC事务机制
+// func loadAllSnapshot(maxSize uint64) []*TxnSnapshot {
+//
+// }
+//
+// // loadSnapshotByTime 根据时间戳加载对应的事务快照
+// // 参数 timestamp 是要查找的事务提交时间
+// // 返回找到的事务快照指针，如果没有找到则返回错误
+// func loadSnapshotByTime(timestamp uint64, db *DB) (*Txn, error) {
+//
+// }
+//
+// func deleteSnapshotByTime(timestamp uint64, db *DB) error {
+//
+// }
+func generateHashCode(key []byte) uint64 {
+	h := fnv.New64a()
+	_, err := h.Write(key)
 	if err != nil {
-		return nil, ErrTxnNotFound
+		return 0
 	}
-
-	// 解码找到的事务
-	txn := DecodeTxn(value)
-	if txn == nil {
-		return nil, ErrDecodeTxnError
-	}
-
-	return txn, nil
-}
-
-func deleteSnapshotByTime(timestamp uint64, db *DB) error {
-	deleteKey := fmt.Sprintf("%s-%d", MVCC_SNAPSHOT_PREFIX, timestamp)
-	if err := db.Delete([]byte(deleteKey)); err != nil {
-		return err
-	}
-	return nil
+	return h.Sum64()
 }

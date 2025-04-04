@@ -106,7 +106,7 @@ message Message {
   // 事务相关扩展
   string txn_context_id = 14;          // 事务上下文ID
   TransactionPhase txn_phase = 15;     // 事务阶段
-
+  TransactionPackage txn_package = 16; 
 }
 // ---------------------------
 // 新增枚举类型

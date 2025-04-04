@@ -6,7 +6,7 @@ import (
 )
 
 type Update struct {
-	Watermark *watermark
+	Watermark *Watermark
 	Tracker   *tracker
 	UpMu      *sync.RWMutex
 	db        *DB
@@ -14,7 +14,7 @@ type Update struct {
 
 // NewUpdate 这个函数需要再数据库启动的时候就调用，保证水位的一致性
 func NewUpdate(maxSize uint64, db *DB) *Update {
-	watermark := newWatermark(maxSize, db)
+	watermark := NewWatermark(maxSize, db)
 	tracker := newTracker()
 	snapshot := loadAllSnapshot(maxSize, db)
 	// 先更新水位线再更新事务映射

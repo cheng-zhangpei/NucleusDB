@@ -37,16 +37,6 @@ func (db *DB) Merge() error {
 		return ErrMergeRatioUnreachable
 	}
 	// 查看剩余磁盘空间是否还能支撑merge
-	availableDiskSize, err := utils.AvailableDiskSize()
-
-	if err != nil {
-		db.mu.Unlock()
-		return err
-	}
-	if uint64(totalSize-db.reclaimSize) > -availableDiskSize {
-		db.mu.Unlock()
-		return ErrMergeRatioUnreachable
-	}
 	// 开始merge
 	db.isMerging = true
 	// 这种写法要稍微注意一下
@@ -80,7 +70,7 @@ func (db *DB) Merge() error {
 	sort.Slice(mergeFiles, func(i, j int) bool {
 		return mergeFiles[i].FileId < mergeFiles[j].FileId
 	})
-	mergePath := db.getMergePath()
+	mergePath := db.getMergePathWin()
 	// 如果这个merge目录存在（说明之前存在merge）
 	// 需要将目录删掉
 	if _, err := os.Stat(mergePath); err == nil {
@@ -186,9 +176,13 @@ func (db *DB) getMergePath() string {
 	base := path.Base(db.options.DirPath) // 得到目录的名称
 	return filepath.Join(dir, base+mergeDirName)
 }
-
+func (db *DB) getMergePathWin() string {
+	baseDir := filepath.Clean(db.options.DirPath)
+	mergePath := filepath.Join(baseDir, mergeDirName) // 使用Join自动处理分隔符
+	return mergePath
+}
 func (db *DB) loadMergeFiles() error {
-	mergePath := db.getMergePath()
+	mergePath := db.getMergePathWin()
 	// 如果目录不存在
 	if _, err := os.Stat(mergePath); os.IsNotExist(err) {
 		return nil
