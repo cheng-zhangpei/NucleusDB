@@ -72,6 +72,7 @@ type RaftConfig struct {
 	HttpServerAddr            string        `yaml:"http_server_addr" env:"HTTP_SERVER_ADDR"`
 	InflghtsMaxSize           int           `yaml:"inflghts_max_size" env:"INFLIGHTS_MAX_SIZE"`
 	zkAddr                    string        `yaml:"zkAddr" env:"ZKADDR"`
+	CoordinatorServerAddr     string        `yaml:"CoordinatorServerAddr" env:"COORDINATORSERVERADDR"`
 }
 
 // validate raft config validation
@@ -137,6 +138,14 @@ type raft struct {
 	app            *application
 	coordinator    *txn.Coordinator
 	leaseManager   *txn.TimestampLeaseManager
+	// 事务上下界时间戳
+	minTimeAllocate uint64
+	maxTimeAllocate uint64
+	// 事务数据暂存区
+	txnSnapshot *txn.TxnSnapshot
+	txnBuffer   []*pb.TxnOperation
+	// 协调者客户端
+	coordinatorClient *txn.CoordinatorClient
 }
 
 func newRaft(config *RaftConfig, options ComDB.Options) *raft {
@@ -158,6 +167,8 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 	appl, err := newApplication(options, config.ID)
 	zkConn := txn.NewZookeeperConn([]string{config.zkAddr}, 5*time.Second, nil)
 	leaseManager := txn.NewTimestampLeaseManager(zkConn, "")
+	txnBuffer := make([]*pb.TxnOperation, 0)
+	coorClient := txn.NewCoordinatorClient(config.CoordinatorServerAddr)
 	if err != nil {
 		panic(err)
 	}
@@ -180,6 +191,9 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 		app:                appl,
 		coordinator:        coordinator,
 		leaseManager:       leaseManager,
+		txnBuffer:          txnBuffer,
+		txnSnapshot:        nil,
+		coordinatorClient:  coorClient,
 	}
 	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
 	// 需要对processTracker进行初始化
@@ -368,6 +382,12 @@ func (r *raft) becomeLeader() {
 	r.lead = r.id
 	r.state = StateLeader
 	r.isLeader = true
+	// todo 此处的错误处理暂时还没有做
+	minTimeAllocate, maxTimeAllocate, _ := r.leaseManager.AcquireLease()
+
+	r.minTimeAllocate = minTimeAllocate
+	r.maxTimeAllocate = maxTimeAllocate
+
 	// 这里不要往里面去放一个空白的日志，我的index是从0开始的
 	//r.reduceUncommittedSize([]pb.Entry{emptyEnt})
 	log.Printf("%x became leader at term %d\n", r.id, r.Term)
@@ -383,14 +403,12 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		return nil
 	case pb.MessageType_MsgProp:
 		// 处理 MsgProp 类型的消: 确保提案的正确性和合法性，并将日志条目追加到 Raft 日志中
-
 		if len(msg.Entries) == 0 {
 			log.Fatalf("%x stepped empty MsgProp\n", r.id)
 		}
 		if r.processTracker.Progress[r.id] == nil {
 			return ErrProposalDropped
 		}
-
 		if !r.appendEntry(msg.Entries) {
 			return ErrProposalDropped
 		}
@@ -978,7 +996,127 @@ func (r *raft) sendTxnRequest(msg *pb.Message) {
 	r.bcastTxnMessage(TxnContextId, TxnPackage, Phase)
 }
 
-// follower 对
-func (r *raft) handleTxnRequest(msg *pb.Message) {
+// 通过message将事务传入需要在raft层对事务进行解包
+func (r *raft) constructTxnSnapshot(msg *pb.Message) {
+	operations := msg.TxnPackage.Operations
+	txnSnapshot := txn.NewTxnSnapshot()
+	opList := make([]*txn.Operation, 0)
+	conflictKeys := make(map[uint64]struct{})
+	for _, op := range operations {
+		if op.OpType == pb.OperationType_OP_READ {
+			hashcode := txn.GenerateKeyHashCode([]byte(op.Key))
+			tempOp := &txn.Operation{
+				Cmd:   "GET",
+				Key:   []byte(op.Key),
+				Value: op.Value,
+			}
+			opList = append(opList, tempOp)
+			conflictKeys[hashcode] = struct{}{}
+			txnSnapshot.PendingReads[hashcode] = tempOp
+		}
+		if op.OpType == pb.OperationType_OP_PUT {
+			hashcode := txn.GenerateKeyHashCode([]byte(op.Key))
+			tempOp := &txn.Operation{
+				Cmd:   "PUT",
+				Key:   []byte(op.Key),
+				Value: op.Value,
+			}
+			opList = append(opList, tempOp)
+			txnSnapshot.PendingWrite[hashcode] = tempOp
+		}
+		if op.OpType == pb.OperationType_OP_DELETE {
+			hashcode := txn.GenerateKeyHashCode([]byte(op.Key))
+			tempOp := &txn.Operation{
+				Cmd:   "DELETE",
+				Key:   []byte(op.Key),
+				Value: op.Value,
+			}
+			opList = append(opList, tempOp)
+			txnSnapshot.PendingWrite[hashcode] = tempOp
+		}
+	}
+	txnSnapshot.StartWatermark = txn.GetCurrenTime()
+	txnSnapshot.Operations = opList
+	txnSnapshot.ConflictKeys = conflictKeys
+	// 将日志信息保存在raft结构中
+	r.txnSnapshot = txnSnapshot
+	r.txnBuffer = msg.TxnPackage.Operations
+	return
+}
 
+// follower对leader所发出的事务请求进行处理
+func (r *raft) handleTxnRequest(msg *pb.Message) {
+	// 将数据解包并保存在raft结构暂存区中
+	r.constructTxnSnapshot(msg)
+	// 这里只需要广播信息就好了
+	// TODO 这里的id主要用于幂等性的处理，后续流程跑通之后继续添加流程
+	r.bcastTxnMessage("1", msg.TxnPackage, msg.TxnPhase)
+}
+
+// Leader对follower的response进行处理
+func (r *raft) handleTxnResponse(msg *pb.Message) error {
+	// 将数据放入自身的暂存区
+	r.constructTxnSnapshot(msg)
+	// 提交数据
+	if err := r.Commit(); err != nil {
+		return err
+	}
+	// 构造数据并发送给leader
+	// 这个时候Leader中的快照应该保存的是
+	message := &pb.Message{
+		From: r.id,
+		To:   r.lead,
+		Type: pb.MessageType_MsgCommitTxnResp,
+	}
+	// 发送回复信息
+	// todo 有一个问题这个时候的leader中的Txn其实是无法改变的，否则会导致一致性问题，只有等到leader接受到大部分follower的数据之后才会修改现在的Txn
+	// todo 这个方法感觉过于局限，有种串行化的味道，效率有点太低了，这个机制一定是还可以修改的，但是我暂时不知道需要怎么修改
+	r.send(message)
+	return nil
+}
+
+// 如果follower在提交过程中发生了冲突，此时需要向leader进行仲裁
+func (r *raft) followerHandleConflict() {
+	// 这里直接将数据发送给Leader就好了，直接由Leader处理后续的数据处理
+	msg := &pb.Message{
+		From: r.id,
+		To:   r.lead,
+		Type: pb.MessageType_MsgCommitConflict,
+	}
+	// 通知leader当前的follower出现问题
+	r.send(msg)
+}
+
+// todo Leader需要对冲突进行处理
+func (r *raft) leaderHandleConflict() {
+	log.Println("leader found conflict!")
+}
+func (r *raft) Commit() error {
+	checkList := make([]uint64, 0)
+	for key, _ := range r.txnSnapshot.ConflictKeys {
+		checkList = append(checkList, key)
+	}
+	// 此处的CommitTs是follower的提交时间，
+	commitTs := txn.GetCurrenTime()
+	hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, commitTs)
+	if err != nil {
+		return err
+	}
+	if hasConflict {
+		r.followerHandleConflict()
+		return nil
+	}
+	// 遍历事务的operations并执行
+	// 这里需要加锁
+	applyEntryList := make([]*applyEntry, 0)
+	for _, operation := range r.txnSnapshot.Operations {
+		applyEntry := &applyEntry{
+			Command: operation.Cmd,
+			Key:     string(operation.Key),
+			Value:   string(operation.Value),
+		}
+		applyEntryList = append(applyEntryList, applyEntry)
+	}
+	r.app.applyc <- applyEntryList
+	return nil
 }

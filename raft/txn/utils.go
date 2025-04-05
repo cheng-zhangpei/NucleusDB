@@ -3,6 +3,7 @@ package txn
 import (
 	"encoding/binary"
 	"hash/fnv"
+	"time"
 )
 
 // EncodeTxn 编码入口函数
@@ -11,23 +12,31 @@ func EncodeTxn(txn *TxnSnapshot) []byte {
 	var index int
 
 	// 时间戳（固定长度）
-	binary.LittleEndian.PutUint64(buf[index:], txn.startWatermark)
+	binary.LittleEndian.PutUint64(buf[index:], txn.StartWatermark)
 	index += 8
 	binary.LittleEndian.PutUint64(buf[index:], txn.commitTime)
 	index += 8
 
 	// 编码各字段（顺序必须与解码保持一致）
-	buf = encodeMap(buf, &index, txn.pendingWrite)
+	buf = encodeMap(buf, &index, txn.PendingWrite)
 	buf = encodeMap(buf, &index, txn.pendingRepeatWrites)
-	buf = encodeMap(buf, &index, txn.pendingReads)
-	buf = encodeConflictKeys(buf, &index, txn.conflictKeys)
-	buf = encodeOperations(buf, &index, txn.operations)
+	buf = encodeMap(buf, &index, txn.PendingReads)
+	buf = encodeConflictKeys(buf, &index, txn.ConflictKeys)
+	buf = encodeOperations(buf, &index, txn.Operations)
 
 	return buf[:index]
 }
+func GenerateKeyHashCode(key []byte) uint64 {
+	h := fnv.New64a()
+	_, err := h.Write(key)
+	if err != nil {
+		return 0
+	}
+	return h.Sum64()
+}
 
 // 辅助编码方法
-func encodeMap(buf []byte, index *int, m map[uint64]*operation) []byte {
+func encodeMap(buf []byte, index *int, m map[uint64]*Operation) []byte {
 	// 写入map长度
 	buf = putVarintWithExtend(buf, index, int64(len(m)))
 
@@ -43,10 +52,10 @@ func encodeMap(buf []byte, index *int, m map[uint64]*operation) []byte {
 	return buf
 }
 
-func encodeOperation(buf []byte, index *int, op *operation) []byte {
+func encodeOperation(buf []byte, index *int, op *Operation) []byte {
 	// 命令类型（1字节）
 	buf = extendBuf(buf, *index+1)
-	switch op.cmd {
+	switch op.Cmd {
 	case "PUT":
 		buf[*index] = 1
 	case "GET":
@@ -57,17 +66,17 @@ func encodeOperation(buf []byte, index *int, op *operation) []byte {
 	*index++
 
 	// 变长编码key
-	buf = putVarintWithExtend(buf, index, int64(len(op.key)))
-	buf = extendBuf(buf, *index+len(op.key))
-	copy(buf[*index:], op.key)
-	*index += len(op.key)
+	buf = putVarintWithExtend(buf, index, int64(len(op.Key)))
+	buf = extendBuf(buf, *index+len(op.Key))
+	copy(buf[*index:], op.Key)
+	*index += len(op.Key)
 
 	// 仅PUT需要value
-	if op.cmd == "PUT" {
-		buf = putVarintWithExtend(buf, index, int64(len(op.value)))
-		buf = extendBuf(buf, *index+len(op.value))
-		copy(buf[*index:], op.value)
-		*index += len(op.value)
+	if op.Cmd == "PUT" {
+		buf = putVarintWithExtend(buf, index, int64(len(op.Value)))
+		buf = extendBuf(buf, *index+len(op.Value))
+		copy(buf[*index:], op.Value)
+		*index += len(op.Value)
 	}
 	return buf
 }
@@ -85,7 +94,7 @@ func encodeConflictKeys(buf []byte, index *int, m map[uint64]struct{}) []byte {
 	return buf
 }
 
-func encodeOperations(buf []byte, index *int, ops []*operation) []byte {
+func encodeOperations(buf []byte, index *int, ops []*Operation) []byte {
 	// 写入切片长度
 	buf = putVarintWithExtend(buf, index, int64(len(ops)))
 
@@ -113,35 +122,35 @@ func encodeStrings(buf []byte, index *int, strs []string) []byte {
 // 解码逻辑
 func DecodeTxn(data []byte) *TxnSnapshot {
 	txn := &TxnSnapshot{
-		pendingWrite:        make(map[uint64]*operation),
-		pendingRepeatWrites: make(map[uint64]*operation),
-		pendingReads:        make(map[uint64]*operation),
-		conflictKeys:        make(map[uint64]struct{}),
+		PendingWrite:        make(map[uint64]*Operation),
+		pendingRepeatWrites: make(map[uint64]*Operation),
+		PendingReads:        make(map[uint64]*Operation),
+		ConflictKeys:        make(map[uint64]struct{}),
 	}
 
 	var index int
 
 	// 解码时间戳
-	txn.startWatermark = binary.LittleEndian.Uint64(data[index:])
+	txn.StartWatermark = binary.LittleEndian.Uint64(data[index:])
 	index += 8
 	txn.commitTime = binary.LittleEndian.Uint64(data[index:])
 	index += 8
 
 	// 按编码顺序解码各字段
-	txn.pendingWrite = decodeMap(data, &index)
+	txn.PendingWrite = decodeMap(data, &index)
 	txn.pendingRepeatWrites = decodeMap(data, &index)
-	txn.pendingReads = decodeMap(data, &index)
-	txn.conflictKeys = decodeConflictKeys(data, &index)
-	txn.operations = decodeOperations(data, &index)
+	txn.PendingReads = decodeMap(data, &index)
+	txn.ConflictKeys = decodeConflictKeys(data, &index)
+	txn.Operations = decodeOperations(data, &index)
 	return txn
 }
 
 // 解码辅助方法
-func decodeMap(data []byte, index *int) map[uint64]*operation {
+func decodeMap(data []byte, index *int) map[uint64]*Operation {
 	size, n := binary.Varint(data[*index:])
 	*index += n
 
-	m := make(map[uint64]*operation, size)
+	m := make(map[uint64]*Operation, size)
 	for i := int64(0); i < size; i++ {
 		// 解码key
 		key := binary.LittleEndian.Uint64(data[*index:])
@@ -154,39 +163,42 @@ func decodeMap(data []byte, index *int) map[uint64]*operation {
 	return m
 }
 
-func decodeOperation(data []byte, index *int) *operation {
-	op := &operation{}
+func decodeOperation(data []byte, index *int) *Operation {
+	op := &Operation{}
 
 	// 解码命令类型
 	switch data[*index] {
 	case 1:
-		op.cmd = "PUT"
+		op.Cmd = "PUT"
 	case 2:
-		op.cmd = "GET"
+		op.Cmd = "GET"
 	case 3:
-		op.cmd = "DELETE"
+		op.Cmd = "DELETE"
 	}
 	*index++
 
 	// 解码key
 	keyLen, n := binary.Varint(data[*index:])
 	*index += n
-	op.key = make([]byte, keyLen)
-	copy(op.key, data[*index:*index+int(keyLen)])
+	op.Key = make([]byte, keyLen)
+	copy(op.Key, data[*index:*index+int(keyLen)])
 	*index += int(keyLen)
 
 	// 解码value（仅PUT）
-	if op.cmd == "PUT" {
+	if op.Cmd == "PUT" {
 		valLen, n := binary.Varint(data[*index:])
 		*index += n
-		op.value = make([]byte, valLen)
-		copy(op.value, data[*index:*index+int(valLen)])
+		op.Value = make([]byte, valLen)
+		copy(op.Value, data[*index:*index+int(valLen)])
 		*index += int(valLen)
 	}
 
 	return op
 }
-
+func GetCurrenTime() uint64 {
+	timestampSec := uint64(time.Now().Unix())
+	return timestampSec
+}
 func decodeConflictKeys(data []byte, index *int) map[uint64]struct{} {
 	size, n := binary.Varint(data[*index:])
 	*index += n
@@ -200,11 +212,11 @@ func decodeConflictKeys(data []byte, index *int) map[uint64]struct{} {
 	return m
 }
 
-func decodeOperations(data []byte, index *int) []*operation {
+func decodeOperations(data []byte, index *int) []*Operation {
 	size, n := binary.Varint(data[*index:])
 	*index += n
 
-	ops := make([]*operation, size)
+	ops := make([]*Operation, size)
 	for i := range ops {
 		ops[i] = decodeOperation(data, index)
 	}

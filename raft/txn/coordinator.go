@@ -21,28 +21,28 @@ type Coordinator struct {
 	// 时间戳段大小
 	timeSegment uint64
 }
-type operation struct {
-	cmd   string // PUT/GET/DELETE
-	key   []byte
-	value []byte
+type Operation struct {
+	Cmd   string // PUT/GET/DELETE
+	Key   []byte
+	Value []byte
 }
 
 // TxnSnapshot 需要保存在zk中的数据
 
 type TxnSnapshot struct {
-	// 当前最新写入操作 (key hash => operation)
-	pendingWrite map[uint64]*operation
+	// 当前最新写入操作 (key hash => Operation)
+	PendingWrite map[uint64]*Operation
 	// 同一key的多次写入历史 (仅保留前一次写入)
-	pendingRepeatWrites map[uint64]*operation
+	pendingRepeatWrites map[uint64]*Operation
 	// 读操作记录 (key hash => operation)
-	pendingReads map[uint64]*operation
+	PendingReads map[uint64]*Operation
 	// 事务时间戳
-	startWatermark uint64
+	StartWatermark uint64
 	commitTime     uint64
 	// 冲突检测用的key指纹
-	conflictKeys map[uint64]struct{}
+	ConflictKeys map[uint64]struct{}
 	// 统一顺序存储
-	operations []*operation
+	Operations []*Operation
 }
 
 func NewCoordinator(zkAddr string) *Coordinator {
@@ -53,6 +53,18 @@ func NewCoordinator(zkAddr string) *Coordinator {
 		zkAddr:    zkAddr,
 		zkConn:    zkConn,
 		waterMark: watermark,
+	}
+}
+func NewTxnSnapshot() *TxnSnapshot {
+	return &TxnSnapshot{
+		PendingWrite:        make(map[uint64]*Operation),
+		pendingRepeatWrites: make(map[uint64]*Operation),
+		PendingReads:        make(map[uint64]*Operation),
+		// 初始化水位线设置为0
+		StartWatermark: 0,
+		commitTime:     0,
+		ConflictKeys:   make(map[uint64]struct{}),
+		Operations:     make([]*Operation, 0),
 	}
 }
 
@@ -72,7 +84,7 @@ func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, sta
 		enSnapshot := snapshots[time]
 		txnSnapshot := DecodeTxn(enSnapshot)
 		// 判断是否与该事务冲突
-		for key, _ := range txnSnapshot.pendingWrite {
+		for key, _ := range txnSnapshot.PendingWrite {
 			ConflictKeysSet[key] = struct{}{}
 		}
 		for key, _ := range txnSnapshot.pendingRepeatWrites {

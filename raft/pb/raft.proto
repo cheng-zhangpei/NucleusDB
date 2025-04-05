@@ -53,6 +53,7 @@ enum OperationType {
   OP_DELETE = 2;
   OP_COMPENSATION_PUT = 3;  // 补偿PUT操作
   OP_COMPENSATION_DELETE = 4; // 补偿DELETE操作
+  OP_READ = 5; // 事务的读取操作
 }
 
 // 事务操作单元
@@ -88,6 +89,8 @@ enum MessageType {
   MsgCommitTxn = 10; // Txn request
   MsgCommitTxnResp = 11; // Txn commit response
   MsgCompensation = 12; // Compensation txn trigger
+  MsgCommitConflict = 13; // Conflict Message Request
+  MsgCommitConflictResp = 14; // Conflict message response
 }
 
 message Message {

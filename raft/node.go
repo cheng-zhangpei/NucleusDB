@@ -39,6 +39,8 @@ type Status struct {
 	BaseStatus
 	Progress map[uint64]tracker.Progress
 }
+
+// todo 需要给node加一个事务处理的专门通道，注意这个通道也需要appendEntry，需要使用一套新的日志格式
 type node struct {
 	// propc 是一个消息通道，用于提交提案并接收提案处理结果。
 	propc chan *msgWithResult

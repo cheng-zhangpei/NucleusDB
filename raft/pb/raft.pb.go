@@ -30,6 +30,7 @@ const (
 	OperationType_OP_DELETE              OperationType = 2
 	OperationType_OP_COMPENSATION_PUT    OperationType = 3 // 补偿PUT操作
 	OperationType_OP_COMPENSATION_DELETE OperationType = 4 // 补偿DELETE操作
+	OperationType_OP_READ                OperationType = 5 // 事务的读取操作
 )
 
 // Enum value maps for OperationType.
@@ -40,6 +41,7 @@ var (
 		2: "OP_DELETE",
 		3: "OP_COMPENSATION_PUT",
 		4: "OP_COMPENSATION_DELETE",
+		5: "OP_READ",
 	}
 	OperationType_value = map[string]int32{
 		"OP_UNKNOWN":             0,
@@ -47,6 +49,7 @@ var (
 		"OP_DELETE":              2,
 		"OP_COMPENSATION_PUT":    3,
 		"OP_COMPENSATION_DELETE": 4,
+		"OP_READ":                5,
 	}
 )
 
@@ -80,19 +83,21 @@ func (OperationType) EnumDescriptor() ([]byte, []int) {
 type MessageType int32
 
 const (
-	MessageType_MsgHup           MessageType = 0  // Trigger election
-	MessageType_MsgBeat          MessageType = 1  // Heartbeat
-	MessageType_MsgProp          MessageType = 2  // Propose log entry
-	MessageType_MsgApp           MessageType = 3  // Append log entries
-	MessageType_MsgAppResp       MessageType = 4  // Response to append
-	MessageType_MsgVote          MessageType = 5  // Request vote
-	MessageType_MsgVoteResp      MessageType = 6  // Response to vote
-	MessageType_MsgSnap          MessageType = 7  // Install snapshot
-	MessageType_MsgHeartbeat     MessageType = 8  // Leader heartbeat
-	MessageType_MsgHeartbeatResp MessageType = 9  // Response to heartbeat
-	MessageType_MsgCommitTxn     MessageType = 10 // Txn request
-	MessageType_MsgCommitTxnResp MessageType = 11 // Txn commit response
-	MessageType_MsgCompensation  MessageType = 12 // Compensation txn trigger
+	MessageType_MsgHup                MessageType = 0  // Trigger election
+	MessageType_MsgBeat               MessageType = 1  // Heartbeat
+	MessageType_MsgProp               MessageType = 2  // Propose log entry
+	MessageType_MsgApp                MessageType = 3  // Append log entries
+	MessageType_MsgAppResp            MessageType = 4  // Response to append
+	MessageType_MsgVote               MessageType = 5  // Request vote
+	MessageType_MsgVoteResp           MessageType = 6  // Response to vote
+	MessageType_MsgSnap               MessageType = 7  // Install snapshot
+	MessageType_MsgHeartbeat          MessageType = 8  // Leader heartbeat
+	MessageType_MsgHeartbeatResp      MessageType = 9  // Response to heartbeat
+	MessageType_MsgCommitTxn          MessageType = 10 // Txn request
+	MessageType_MsgCommitTxnResp      MessageType = 11 // Txn commit response
+	MessageType_MsgCompensation       MessageType = 12 // Compensation txn trigger
+	MessageType_MsgCommitConflict     MessageType = 13 // Conflict Message Request
+	MessageType_MsgCommitConflictResp MessageType = 14 // Conflict message response
 )
 
 // Enum value maps for MessageType.
@@ -111,21 +116,25 @@ var (
 		10: "MsgCommitTxn",
 		11: "MsgCommitTxnResp",
 		12: "MsgCompensation",
+		13: "MsgCommitConflict",
+		14: "MsgCommitConflictResp",
 	}
 	MessageType_value = map[string]int32{
-		"MsgHup":           0,
-		"MsgBeat":          1,
-		"MsgProp":          2,
-		"MsgApp":           3,
-		"MsgAppResp":       4,
-		"MsgVote":          5,
-		"MsgVoteResp":      6,
-		"MsgSnap":          7,
-		"MsgHeartbeat":     8,
-		"MsgHeartbeatResp": 9,
-		"MsgCommitTxn":     10,
-		"MsgCommitTxnResp": 11,
-		"MsgCompensation":  12,
+		"MsgHup":                0,
+		"MsgBeat":               1,
+		"MsgProp":               2,
+		"MsgApp":                3,
+		"MsgAppResp":            4,
+		"MsgVote":               5,
+		"MsgVoteResp":           6,
+		"MsgSnap":               7,
+		"MsgHeartbeat":          8,
+		"MsgHeartbeatResp":      9,
+		"MsgCommitTxn":          10,
+		"MsgCommitTxnResp":      11,
+		"MsgCompensation":       12,
+		"MsgCommitConflict":     13,
+		"MsgCommitConflictResp": 14,
 	}
 )
 
@@ -847,7 +856,7 @@ func (x *TransactionPackage) GetCompensationOps() []*TxnOperation {
 }
 
 type Message struct {
-	State      protoimpl.MessageState `protogen:"open.v1"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
 	Type       MessageType            `protobuf:"varint,1,opt,name=type,proto3,enum=pb.MessageType" json:"type,omitempty"`
 	To         uint64                 `protobuf:"varint,2,opt,name=to,proto3" json:"to,omitempty"`
 	From       uint64                 `protobuf:"varint,3,opt,name=from,proto3" json:"from,omitempty"`
@@ -1148,7 +1157,7 @@ const file_raft_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x15\n" +
 	"\x06txn_id\x18\x02 \x01(\tR\x05txnId\x12)\n" +
 	"\x10conflicted_nodes\x18\x03 \x03(\x04R\x0fconflictedNodes\x12!\n" +
-	"\ferror_detail\x18\x04 \x01(\tR\verrorDetail*o\n" +
+	"\ferror_detail\x18\x04 \x01(\tR\verrorDetail*|\n" +
 	"\rOperationType\x12\x0e\n" +
 	"\n" +
 	"OP_UNKNOWN\x10\x00\x12\n" +
@@ -1156,7 +1165,8 @@ const file_raft_proto_rawDesc = "" +
 	"\x06OP_PUT\x10\x01\x12\r\n" +
 	"\tOP_DELETE\x10\x02\x12\x17\n" +
 	"\x13OP_COMPENSATION_PUT\x10\x03\x12\x1a\n" +
-	"\x16OP_COMPENSATION_DELETE\x10\x04*\xdf\x01\n" +
+	"\x16OP_COMPENSATION_DELETE\x10\x04\x12\v\n" +
+	"\aOP_READ\x10\x05*\x91\x02\n" +
 	"\vMessageType\x12\n" +
 	"\n" +
 	"\x06MsgHup\x10\x00\x12\v\n" +
@@ -1174,7 +1184,9 @@ const file_raft_proto_rawDesc = "" +
 	"\fMsgCommitTxn\x10\n" +
 	"\x12\x14\n" +
 	"\x10MsgCommitTxnResp\x10\v\x12\x13\n" +
-	"\x0fMsgCompensation\x10\f*_\n" +
+	"\x0fMsgCompensation\x10\f\x12\x15\n" +
+	"\x11MsgCommitConflict\x10\r\x12\x19\n" +
+	"\x15MsgCommitConflictResp\x10\x0e*_\n" +
 	"\tEntryType\x12\x10\n" +
 	"\fENTRY_NORMAL\x10\x00\x12\x15\n" +
 	"\x11ENTRY_CONF_CHANGE\x10\x01\x12\r\n" +
