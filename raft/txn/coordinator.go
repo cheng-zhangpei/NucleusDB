@@ -29,25 +29,10 @@ type Operation struct {
 
 // TxnSnapshot 需要保存在zk中的数据
 
-type TxnSnapshot struct {
-	// 当前最新写入操作 (key hash => Operation)
-	PendingWrite map[uint64]*Operation
-	// 同一key的多次写入历史 (仅保留前一次写入)
-	pendingRepeatWrites map[uint64]*Operation
-	// 读操作记录 (key hash => operation)
-	PendingReads map[uint64]*Operation
-	// 事务时间戳
-	StartWatermark uint64
-	commitTime     uint64
-	// 冲突检测用的key指纹
-	ConflictKeys map[uint64]struct{}
-	// 统一顺序存储
-	Operations []*Operation
-}
-
 func NewCoordinator(zkAddr string) *Coordinator {
 	// 开启http服务器
 	zkConn := NewZookeeperConn([]string{zkAddr}, time.Second*5, nil)
+	//todo 后续水位线设置为可调整
 	watermark := NewWatermark(5)
 	return &Coordinator{
 		zkAddr:    zkAddr,

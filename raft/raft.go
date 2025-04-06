@@ -466,6 +466,14 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		if pr.Match < r.raftLog.lastIndex() {
 			r.sendAppend(msg.From)
 		}
+	case pb.MessageType_MsgCommitTxn:
+		// 这个时候Leader收到CommitTxn请求而启动日志处理，这里是独立于基础操作之外的一个另一个操作所以需要重新定义执行逻辑
+		pr.RecentActive = true
+		// 封装message
+
+		msg := r.TxnSnapshotToMsg()
+
+		r.sendTxnRequest(msg)
 	}
 
 	return nil
@@ -777,7 +785,7 @@ func (r *raft) bcastAppend() {
 		r.sendAppend(id)
 	})
 }
-func (r *raft) bcastTxnMessage(TxnContextId string, TxnPackage *pb.TransactionPackage, Phase pb.TransactionPhase) {
+func (r *raft) bcastTxnMessage(TxnContextId uint64, TxnPackage *pb.TransactionPackage, Phase pb.TransactionPhase) {
 	r.processTracker.Visit(func(id uint64, _ *tracker.Progress) {
 		if id == r.id {
 			return
@@ -988,12 +996,54 @@ func getCommand(ent []*pb.Entry) []*applyEntry {
 }
 
 // sendTxnRequest Leader处理事务机制
+// todo: 一旦leader收到快照就要将数据保存在zk中，因为可能会出现事务还没有commit leader就直接崩溃的情况
 func (r *raft) sendTxnRequest(msg *pb.Message) {
 	TxnContextId := msg.TxnContextId
 	TxnPackage := msg.TxnPackage
-	Phase := msg.TxnPhase
+	Phase := pb.TransactionPhase_PHASE_PREPARE
 	// 广播事务数据
 	r.bcastTxnMessage(TxnContextId, TxnPackage, Phase)
+}
+func (r *raft) TxnSnapshotToMsg() *pb.Message {
+	// 创建基础 Message
+	msg := &pb.Message{
+		Type: pb.MessageType_MsgCommitTxn, // 假设有对应的消息类型
+		From: r.id,
+		Term: r.Term,
+	}
+
+	// 如果 txnSnapshot 为空，返回空消息
+	if r.txnSnapshot == nil {
+		return msg
+	}
+
+	// 转换操作列表为 protobuf 的 Operation 数组
+	operations := make([]*pb.TxnOperation, 0, len(r.txnSnapshot.Operations))
+	for _, op := range r.txnSnapshot.Operations {
+		pbOp := &pb.TxnOperation{
+			Key:   string(op.Key),
+			Value: op.Value,
+		}
+		// 设置操作类型
+		switch op.Cmd {
+		case "GET":
+			pbOp.OpType = pb.OperationType_OP_READ
+		case "PUT":
+			pbOp.OpType = pb.OperationType_OP_PUT
+		case "DELETE":
+			pbOp.OpType = pb.OperationType_OP_DELETE
+		}
+		operations = append(operations, pbOp)
+	}
+
+	// 构建 TxnPackage
+	txnPackage := &pb.TransactionPackage{
+		Operations: operations,
+	}
+	// 设置到 Message 中
+	msg.TxnPackage = txnPackage
+	msg.TxnContextId = 0
+	return msg
 }
 
 // 通过message将事务传入需要在raft层对事务进行解包
@@ -1048,9 +1098,13 @@ func (r *raft) constructTxnSnapshot(msg *pb.Message) {
 func (r *raft) handleTxnRequest(msg *pb.Message) {
 	// 将数据解包并保存在raft结构暂存区中
 	r.constructTxnSnapshot(msg)
-	// 这里只需要广播信息就好了
-	// TODO 这里的id主要用于幂等性的处理，后续流程跑通之后继续添加流程
-	r.bcastTxnMessage("1", msg.TxnPackage, msg.TxnPhase)
+	checkList := make([]uint64, 0)
+	for key, _ := range r.txnSnapshot.PendingReads {
+		checkList = append(checkList, key)
+	}
+	// todo Follower的授时按理来说也需要按照全局授时来进行判断吧？
+	//CommitTs := txn.GetCurrenTime()
+	//r.coordinatorClient.HandleConflictCheck(checkList, startTime)
 }
 
 // Leader对follower的response进行处理
@@ -1119,4 +1173,10 @@ func (r *raft) Commit() error {
 	}
 	r.app.applyc <- applyEntryList
 	return nil
+}
+
+// TxnCommit 这个函数的Commit的本质其实也只是将操作变为对应的日志的内容，也就是AppendEntry，由协程自动的将数据应用到状态机中
+func (r *raft) TxnCommit() {
+	// 构造Entry放到自身的日志中去
+
 }

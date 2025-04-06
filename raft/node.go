@@ -52,6 +52,8 @@ type node struct {
 	advancec chan struct{}
 	// tickc 是一个滴答通道，用于触发 Raft 节点的定时器。
 	tickc chan struct{}
+	// 事务提案通道
+	txnc chan struct{}
 	// done 是一个完成通道，用于通知 Raft 节点已经完成某些操作。
 	done chan struct{}
 	// stop 是一个停止通道，用于通知 Raft 节点停止运行。
@@ -121,6 +123,7 @@ func StartNodeSeperated(c *RaftConfig, options ComDB.Options) {
 func newNode(rn *RawNode, config *RaftConfig) *node {
 	return &node{
 		propc:    make(chan *msgWithResult, 10),
+		txnc:     make(chan struct{}, 10),
 		recvc:    make(chan *pb.Message, 1024),
 		readyc:   make(chan *Ready),
 		advancec: make(chan struct{}),
@@ -153,6 +156,7 @@ func (n *node) run() {
 	// 启动 Raft 主逻辑的 Goroutine
 	go func() {
 		var propc chan *msgWithResult
+		var txnc chan struct{}
 		r := n.rn.raft
 		lead := None
 
@@ -166,9 +170,11 @@ func (n *node) run() {
 						log.Printf("raft.node: %x changed leader from %x to %x at term %d\n", r.id, lead, r.lead, r.Term)
 					}
 					propc = n.propc
+					txnc = n.txnc
 				} else {
 					log.Printf("raft.node: %x lost leader %x at term %d\n", r.id, lead, r.Term)
 					propc = nil
+					txnc = nil
 				}
 				lead = r.lead
 			}
@@ -198,6 +204,27 @@ func (n *node) run() {
 					}
 					r.Step(m)
 				}
+
+			case <-txnc:
+				// 只有leader可以接受事务请求
+				if r.state != StateLeader {
+					log.Printf("raft.node: %x rejected txn prop because it is not the leader\n", r.id)
+					continue
+				}
+				ent := &pb.Entry{
+					Term:  r.Term,
+					Index: r.raftLog.lastIndex(),
+					Data:  nil,
+				}
+				ents := make([]*pb.Entry, 1)
+				ents[0] = ent
+				m := &pb.Message{
+					To:      r.id,
+					Index:   r.raftLog.lastIndex(),
+					Entries: ents,
+					Type:    pb.MessageType_MsgCommitTxn,
+				}
+				r.Step(m)
 			case m := <-n.recvc:
 				// 处理来自其他节点的消息
 				//if pr := r.processTracker.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
@@ -600,6 +627,119 @@ func (n *node) handleCreateMeta(writer http.ResponseWriter, request *http.Reques
 	writer.Write([]byte("memory space successfully"))
 }
 
+// =========================================后面是事务相关的handler============================================
+// handleTxnPut 处理事务PUT
+func (n *node) handleTxnPut(writer http.ResponseWriter, request *http.Request) {
+
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if n.rn.raft.state != StateLeader {
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)  // 403 表示非 Leader
+		fmt.Fprintf(writer, "%d", n.rn.raft.lead) // 返回 leaderID（uint64）
+		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
+		return
+	}
+	var kv map[string]string
+
+	if err := json.NewDecoder(request.Body).Decode(&kv); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		log.Printf("Failed to decode request body: %v\n", err)
+		return
+	}
+	leaderID := n.rn.raft.lead
+	if n.rn.raft.state != StateLeader {
+		// 只返回 leader 的 ID
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(writer, leaderID)
+		log.Printf("only leader can put value. Current leader ID: %d\n", leaderID)
+		return
+	}
+	for key, value := range kv {
+		// 这里直接将数据塞到raft结构的缓冲区中
+		err := n.rn.raft.txnSnapshot.Put([]byte(key), []byte(value))
+		if err != nil {
+			return
+		}
+		log.Printf("Key-value pair inserted successfully: key=%s, value=%s\n", key, value)
+	}
+}
+
+// 处理事务删除
+func (n *node) handleTxnDelete(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if n.rn.raft.state != StateLeader {
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)  // 403 表示非 Leader
+		fmt.Fprintf(writer, "%d", n.rn.raft.lead) // 返回 leaderID（uint64）
+		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
+		return
+	}
+	// 将当前的leader信息返回
+	leaderID := n.rn.raft.lead
+	if n.rn.raft.state != StateLeader {
+		// 只返回 leader 的 ID
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(writer, leaderID)
+		log.Printf("only leader can delete value. Current leader ID: %d\n", leaderID)
+		return
+	}
+	key := request.URL.Query().Get("key")
+	if key == "" {
+		http.Error(writer, "Key is required", http.StatusBadRequest)
+		log.Println("Failed to delete: key is missing")
+		return
+	}
+
+	err := n.rn.raft.txnSnapshot.Delete([]byte(key))
+	if err != nil {
+		return
+	}
+
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte("Key deleted successfully"))
+}
+
+// 处理事务GET
+// todo
+func (n *node) handleTxnGet(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if n.rn.raft.state != StateLeader {
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)  // 403 表示非 Leader
+		fmt.Fprintf(writer, "%d", n.rn.raft.lead) // 返回 leaderID（uint64）
+		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
+		return
+	}
+	key := request.URL.Query().Get("key")
+	err := n.rn.raft.txnSnapshot.Get([]byte(key))
+	if err != nil {
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+}
+
+// 在node层面的commit需要由用户控制
+func (n *node) handleTxnCommit(writer http.ResponseWriter, request *http.Request) {
+	// 这里才是真正发送信号的地方
+	n.txnc <- struct{}{}
+}
+
+// TxnGetResult 获得事务的GET结果
+func (n *node) TxnGetResult(writer http.ResponseWriter, request *http.Request) {
+	//todo 获得Get在事务中的结果，这里干脆也用通道来进行吧
+}
+
 // compiler seem have some problems
 func startRaftHttpServer(n *node, addr string) {
 	// todo 如何知道该节点到底是不是leader？ 动态获取集群Leader节点地址？
@@ -615,6 +755,13 @@ func startRaftHttpServer(n *node, addr string) {
 	MemorySearchRouter := fmt.Sprintf("/raft/%d/MemorySearch", n.rn.raft.id)
 	MemDelRouter := fmt.Sprintf("/raft/%d/MemDel", n.rn.raft.id)
 	MemCreateMetaRouter := fmt.Sprintf("/raft/%d/MemCreateMeta", n.rn.raft.id)
+	// 下面是事务的router
+	TxnGetRouter := fmt.Sprintf("/raft/%d/TxnGet", n.rn.raft.id)
+	TxnSetRouter := fmt.Sprintf("/raft/%d/TxnSet", n.rn.raft.id)
+	TxnDeleteRouter := fmt.Sprintf("/raft/%d/TxnDelete", n.rn.raft.id)
+	TxnCommitRouter := fmt.Sprintf("/raft/%d/TxnCommit", n.rn.raft.id)
+	TxnGetResultRouter := fmt.Sprintf("/raft/%d/TxnCommit", n.rn.raft.id)
+
 	// 注册 HTTP 处理函数
 	http.HandleFunc(putRouter, n.handleRaftPut)
 	http.HandleFunc(getRouter, n.handleRaftGet)
@@ -625,6 +772,11 @@ func startRaftHttpServer(n *node, addr string) {
 	http.HandleFunc(MemorySearchRouter, n.handleMessageSearch)
 	http.HandleFunc(MemDelRouter, n.handleMemoryDel)
 	http.HandleFunc(MemCreateMetaRouter, n.handleCreateMeta)
+	http.HandleFunc(TxnGetRouter, n.handleTxnGet)
+	http.HandleFunc(TxnSetRouter, n.handleTxnPut)
+	http.HandleFunc(TxnDeleteRouter, n.handleTxnDelete)
+	http.HandleFunc(TxnCommitRouter, n.handleTxnCommit)
+	http.HandleFunc(TxnGetResultRouter, n.TxnGetResult)
 
 	// 启动 HTTP 服务器,这里直接阻塞进程就ok了,后台的进程都在成功运行
 	if err := http.ListenAndServe(addr, nil); err != nil {

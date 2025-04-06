@@ -65,11 +65,10 @@ func NewTimestampLeaseManager(zc *zookeeperConn, leaderID string) *TimestampLeas
 func (tm *TimestampLeaseManager) AcquireLease() (uint64, uint64, error) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	// 确保基础路径存在
+	// 确保基础路径存在,如果不存在会初始化时间比如0
 	if err := tm.ensureBasePaths(); err != nil {
 		return 0, 0, fmt.Errorf("初始化路径失败: %v", err)
 	}
-
 	// 使用CAS循环直到成功获取租约
 	for {
 		select {
@@ -185,15 +184,14 @@ func (tm *TimestampLeaseManager) ReleaseLease() error {
 func (tm *TimestampLeaseManager) GetTimestamp() (uint64, error) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-
 	if tm.currentLease == nil {
 		return 0, ErrLeaseNotHeld
 	}
-
 	if tm.currentLease.Start > tm.currentLease.End {
+		// 如果时间段分配过时则返回时间段已经全部分配
 		return 0, ErrLeaseExhausted
 	}
-
+	// 不断将start
 	ts := tm.currentLease.Start
 	tm.currentLease.Start++
 	return ts, nil

@@ -107,9 +107,11 @@ message Message {
   bytes context = 12;
   uint64 logTerm = 13;
   // 事务相关扩展
-  string txn_context_id = 14;          // 事务上下文ID
+  uint64 txn_context_id = 14;          // 事务上下文ID
   TransactionPhase txn_phase = 15;     // 事务阶段
-  TransactionPackage txn_package = 16; 
+  TransactionPackage txn_package = 16;
+  uint64 startTxnTime = 17;
+
 }
 // ---------------------------
 // 新增枚举类型

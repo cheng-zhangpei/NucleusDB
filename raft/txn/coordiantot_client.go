@@ -59,18 +59,15 @@ func (c *CoordinatorClient) HandleConflictCheck(checkKeys []uint64, startTime, c
 // SaveSnapshot 客户端保存快照方法
 func (c *CoordinatorClient) SaveSnapshot(snapshot TxnSnapshot) error {
 	req := saveSnapshotRequest{Snapshot: snapshot}
-
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal request failed: %v", err)
 	}
-
 	resp, err := c.httpClient.Post(c.baseURL+"/save-snapshot", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
