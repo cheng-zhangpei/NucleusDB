@@ -198,7 +198,8 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
 	// 需要对processTracker进行初始化
 	for i := 1; i <= len(config.GRPCClientAddr); i++ {
-		r.processTracker.Votes[uint64(i)] = false // 偶数键为 false，奇数键为 true
+		r.processTracker.Votes[uint64(i)] = false
+		r.processTracker.TxnCommitted[uint64(i)] = false
 	}
 	// 初始化progressMap，如果不初始化无法进行心跳,因为每一个node都有可能变为Leader所以在初始化的时候都要进行创建
 	// tou ge lan hhhh
@@ -470,9 +471,8 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		// 这个时候Leader收到CommitTxn请求而启动日志处理，这里是独立于基础操作之外的一个另一个操作所以需要重新定义执行逻辑
 		pr.RecentActive = true
 		// 封装message
-
+		// todo 发送信息之前暂时先设置对应的startTs并且需要把这个时间发送给
 		msg := r.TxnSnapshotToMsg()
-
 		r.sendTxnRequest(msg)
 	}
 
@@ -557,6 +557,8 @@ func stepFollower(r *raft, msg *pb.Message) error {
 		r.electionElapsed = 0
 		r.lead = msg.From
 		r.handleHeartbeat(msg)
+	case pb.MessageType_MsgCommitTxn:
+		r.handleTxnRequest(msg)
 	}
 	return nil
 }
@@ -996,7 +998,6 @@ func getCommand(ent []*pb.Entry) []*applyEntry {
 }
 
 // sendTxnRequest Leader处理事务机制
-// todo: 一旦leader收到快照就要将数据保存在zk中，因为可能会出现事务还没有commit leader就直接崩溃的情况
 func (r *raft) sendTxnRequest(msg *pb.Message) {
 	TxnContextId := msg.TxnContextId
 	TxnPackage := msg.TxnPackage
@@ -1085,7 +1086,8 @@ func (r *raft) constructTxnSnapshot(msg *pb.Message) {
 			txnSnapshot.PendingWrite[hashcode] = tempOp
 		}
 	}
-	txnSnapshot.StartWatermark = txn.GetCurrenTime()
+	// 现在follower所拿到的时间是全局事务的开始时间
+	txnSnapshot.StartWatermark = msg.StartTxnTime
 	txnSnapshot.Operations = opList
 	txnSnapshot.ConflictKeys = conflictKeys
 	// 将日志信息保存在raft结构中
@@ -1102,31 +1104,26 @@ func (r *raft) handleTxnRequest(msg *pb.Message) {
 	for key, _ := range r.txnSnapshot.PendingReads {
 		checkList = append(checkList, key)
 	}
-	// todo Follower的授时按理来说也需要按照全局授时来进行判断吧？
-	//CommitTs := txn.GetCurrenTime()
-	//r.coordinatorClient.HandleConflictCheck(checkList, startTime)
-}
-
-// Leader对follower的response进行处理
-func (r *raft) handleTxnResponse(msg *pb.Message) error {
-	// 将数据放入自身的暂存区
-	r.constructTxnSnapshot(msg)
-	// 提交数据
-	if err := r.Commit(); err != nil {
-		return err
+	// message需要将当前全局逻辑段也发送给follower
+	GlobalLogicTime := r.txnSnapshot.StartWatermark
+	CommitTs, _ := txn.GenerateHybridTs(GlobalLogicTime)
+	// 此时的提交时间是混合时钟
+	r.txnSnapshot.CommitTime = CommitTs
+	// 这里并不需要担心时钟偏移因为冲突的计算只会根据
+	hasConflict, _ := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, r.txnSnapshot.CommitTime)
+	if hasConflict {
+		r.followerHandleConflict()
+		return
 	}
-	// 构造数据并发送给leader
-	// 这个时候Leader中的快照应该保存的是
-	message := &pb.Message{
+	// 将操作应用到状态机
+	r.TxnCommit()
+	// 构造回复信息
+	msg = &pb.Message{
+		Type: pb.MessageType_MsgCommitTxnResp,
 		From: r.id,
 		To:   r.lead,
-		Type: pb.MessageType_MsgCommitTxnResp,
 	}
-	// 发送回复信息
-	// todo 有一个问题这个时候的leader中的Txn其实是无法改变的，否则会导致一致性问题，只有等到leader接受到大部分follower的数据之后才会修改现在的Txn
-	// todo 这个方法感觉过于局限，有种串行化的味道，效率有点太低了，这个机制一定是还可以修改的，但是我暂时不知道需要怎么修改
-	r.send(message)
-	return nil
+	r.send(msg)
 }
 
 // 如果follower在提交过程中发生了冲突，此时需要向leader进行仲裁
@@ -1145,38 +1142,130 @@ func (r *raft) followerHandleConflict() {
 func (r *raft) leaderHandleConflict() {
 	log.Println("leader found conflict!")
 }
-func (r *raft) Commit() error {
-	checkList := make([]uint64, 0)
-	for key, _ := range r.txnSnapshot.ConflictKeys {
-		checkList = append(checkList, key)
-	}
-	// 此处的CommitTs是follower的提交时间，
-	commitTs := txn.GetCurrenTime()
-	hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, commitTs)
-	if err != nil {
-		return err
-	}
-	if hasConflict {
-		r.followerHandleConflict()
-		return nil
-	}
-	// 遍历事务的operations并执行
-	// 这里需要加锁
-	applyEntryList := make([]*applyEntry, 0)
-	for _, operation := range r.txnSnapshot.Operations {
-		applyEntry := &applyEntry{
-			Command: operation.Cmd,
-			Key:     string(operation.Key),
-			Value:   string(operation.Value),
-		}
-		applyEntryList = append(applyEntryList, applyEntry)
-	}
-	r.app.applyc <- applyEntryList
-	return nil
-}
+
+//func (r *raft) Commit() error {
+//	checkList := make([]uint64, 0)
+//	for key, _ := range r.txnSnapshot.ConflictKeys {
+//		checkList = append(checkList, key)
+//	}
+//	// 此处的CommitTs是follower的提交时间，
+//	commitTs := txn.GetCurrenTime()
+//	hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, commitTs)
+//	if err != nil {
+//		return err
+//	}
+//	if hasConflict {
+//		r.followerHandleConflict()
+//		return nil
+//	}
+//	// 遍历事务的operations并执行
+//	// 这里需要加锁
+//	applyEntryList := make([]*applyEntry, 0)
+//	for _, operation := range r.txnSnapshot.Operations {
+//		applyEntry := &applyEntry{
+//			Command: operation.Cmd,
+//			Key:     string(operation.Key),
+//			Value:   string(operation.Value),
+//		}
+//		applyEntryList = append(applyEntryList, applyEntry)
+//	}
+//	r.app.applyc <- applyEntryList
+//	return nil
+//}
 
 // TxnCommit 这个函数的Commit的本质其实也只是将操作变为对应的日志的内容，也就是AppendEntry，由协程自动的将数据应用到状态机中
 func (r *raft) TxnCommit() {
-	// 构造Entry放到自身的日志中去
+	operations := r.txnBuffer
+	// 根据operations中的内容按照之前规定的Entry的格式进行添加
+	entrys := make([]*pb.Entry, 0)
+	for _, operation := range operations {
+		cmd := operation.OpType
+		key := string(operation.Key)
+		value := string(operation.Value)
+		detailCmd := ""
+		switch cmd {
+		case pb.OperationType_OP_PUT:
 
+			detailCmd = fmt.Sprintf("PUT %s %s", key, value)
+		case pb.OperationType_OP_DELETE:
+			detailCmd = fmt.Sprintf("DELETE %s", key)
+		case pb.OperationType_OP_READ:
+			detailCmd = fmt.Sprintf("GET %s %s", key, value)
+		}
+		tempEntry := &pb.Entry{
+			Term:  r.Term,
+			Index: r.raftLog.lastIndex(),
+			Data:  []byte(detailCmd),
+		}
+		entrys = append(entrys, tempEntry)
+	}
+	// 应用日志
+	r.appendEntry(entrys)
+	r.app.commitc <- entrys
+	// 应用到状态机上
+	r.app.applyc <- getCommand(entrys)
+}
+
+func (r *raft) TxnGetTimestamp() (uint64, error) {
+	logicalTs, err := r.leaseManager.GetTimestamp()
+	if err != nil {
+		return 0, err
+	}
+	hyTs, err := txn.GenerateHybridTs(logicalTs)
+	if err != nil {
+		return 0, err
+	}
+	return hyTs, nil
+}
+
+// handleTxnCommitResp Leader处理消息回复
+// 需要在进行合法性仲裁的同时进行Commit
+func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
+	// 记录当前投票的follower
+	r.processTracker.TxnCommitted[msg.From] = true
+	// 对投票情况进行仲裁
+	if r.TxnPoll() {
+		// 将自身的事务快照提交并将其保存在zk中(注，快照需要保存在全局配置中心中)
+		err := r.coordinatorClient.SaveSnapshot(r.txnSnapshot)
+		if err != nil {
+			return err
+		}
+		checkList := make([]uint64, 0)
+		for key, _ := range r.txnSnapshot.ConflictKeys {
+			checkList = append(checkList, key)
+		}
+		// 此处的CommitTs是follower的提交时间，
+		commitTs := txn.GetCurrenTime()
+		hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, commitTs)
+		if err != nil {
+			return err
+		}
+		if !hasConflict {
+			r.TxnCommit()
+		} else {
+			// 进入事务冲突处理部分
+			r.leaderHandleConflict()
+		}
+	}
+	return nil
+}
+
+func (r *raft) TxnPoll() bool {
+	majorityCount := len(r.processTracker.TxnCommitted)/2 + 1
+	Committed := 0
+	for _, committed := range r.processTracker.TxnCommitted {
+		if committed {
+			Committed++
+		}
+	}
+	if Committed >= majorityCount {
+		return true
+	} else {
+		return false
+	}
+}
+
+// 专门用于Leader处理 todo 这里会涉及到回滚和幂等性的问题等框架成功运行起来之后再来继续搞
+func (r *raft) leaderConflictHandler() {
+	log.Println("Leader has caught the conflict message!")
 }

@@ -2,6 +2,7 @@ package txn
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/fnv"
 	"time"
 )
@@ -14,7 +15,7 @@ func EncodeTxn(txn *TxnSnapshot) []byte {
 	// 时间戳（固定长度）
 	binary.LittleEndian.PutUint64(buf[index:], txn.StartWatermark)
 	index += 8
-	binary.LittleEndian.PutUint64(buf[index:], txn.commitTime)
+	binary.LittleEndian.PutUint64(buf[index:], txn.CommitTime)
 	index += 8
 
 	// 编码各字段（顺序必须与解码保持一致）
@@ -133,7 +134,7 @@ func DecodeTxn(data []byte) *TxnSnapshot {
 	// 解码时间戳
 	txn.StartWatermark = binary.LittleEndian.Uint64(data[index:])
 	index += 8
-	txn.commitTime = binary.LittleEndian.Uint64(data[index:])
+	txn.CommitTime = binary.LittleEndian.Uint64(data[index:])
 	index += 8
 
 	// 按编码顺序解码各字段
@@ -276,4 +277,24 @@ func generateHashCode(key []byte) uint64 {
 		return 0
 	}
 	return h.Sum64()
+}
+
+const (
+	LogicalBits  = 16 // 逻辑时钟占用位数
+	PhysicalBits = 48 // 物理时钟占用位数
+	MaxLogical   = (1 << LogicalBits) - 1
+)
+
+// GenerateHybridTs 生成混合时间戳（高16位逻辑时钟 + 低48位物理时钟）
+func GenerateHybridTs(logicalTs uint64) (uint64, error) {
+	if logicalTs > MaxLogical {
+		return 0, fmt.Errorf("逻辑时钟超出范围(%d > %d)", logicalTs, MaxLogical)
+	}
+	// 获取物理时间（微秒级）
+	now := time.Now()
+	micros := now.UnixMicro()                           // 微秒级时间戳
+	nanos := now.Nanosecond() % 1000                    // 纳秒部分
+	physicalTs := uint64(micros<<10) | uint64(nanos>>3) // 48位物理时间戳
+	// 组合时间戳
+	return (logicalTs << PhysicalBits) | (physicalTs & 0xFFFFFFFFFFFF), nil
 }

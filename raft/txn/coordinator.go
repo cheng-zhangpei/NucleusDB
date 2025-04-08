@@ -1,7 +1,9 @@
 package txn
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -31,7 +33,7 @@ type Operation struct {
 
 func NewCoordinator(zkAddr string) *Coordinator {
 	// 开启http服务器
-	zkConn := NewZookeeperConn([]string{zkAddr}, time.Second*5, nil)
+	zkConn := NewZookeeperConn([]string{zkAddr}, time.Second*30, nil)
 	//todo 后续水位线设置为可调整
 	watermark := NewWatermark(5)
 	return &Coordinator{
@@ -40,28 +42,26 @@ func NewCoordinator(zkAddr string) *Coordinator {
 		waterMark: watermark,
 	}
 }
-func NewTxnSnapshot() *TxnSnapshot {
-	return &TxnSnapshot{
-		PendingWrite:        make(map[uint64]*Operation),
-		pendingRepeatWrites: make(map[uint64]*Operation),
-		PendingReads:        make(map[uint64]*Operation),
-		// 初始化水位线设置为0
-		StartWatermark: 0,
-		commitTime:     0,
-		ConflictKeys:   make(map[uint64]struct{}),
-		Operations:     make([]*Operation, 0),
-	}
-}
 
 // handleConflictCheck 处理分布式情况下的冲突检测
 func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, startTime uint64, commitTs uint64) (bool, error) {
 	// 加载所有位于水位线中的的快照
 	timeRange := co.waterMark.GetTimeRange(startTime, commitTs)
+	// 连接zk
+	if !co.zkConn.connected {
+		err := co.zkConn.Connect()
+		if err != nil {
+			return false, err
+		}
+	}
 
 	// 根据时间范围从zookeeper中获取快照数据信息
 	snapshots, err := co.zkConn.GetSnapshotByPrefix(DIS_TXN_PREFIX)
 	if err != nil {
 		return false, err
+	}
+	if snapshots == nil {
+		return false, nil
 	}
 	ConflictKeysSet := make(map[uint64]struct{})
 	// 收集在这个区间中所出现的所有的key，或者说已经被修改的key，这里不需要担心覆盖，只要出现就是有冲突
@@ -87,9 +87,20 @@ func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, sta
 }
 
 func (co *Coordinator) saveSnapshot(txn *TxnSnapshot, zkConn *zookeeperConn) error {
+	if txn == nil {
+		return errors.New("txn is nil")
+	}
 	encodeTxn := EncodeTxn(txn)
-	txnKey := fmt.Sprintf("%s-%d", DIS_TXN_PREFIX, txn.commitTime)
-	if _, err := zkConn.Set(txnKey, encodeTxn, 1); err != nil {
+	if !co.zkConn.connected {
+		err := co.zkConn.Connect()
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
+	txnKey := fmt.Sprintf("%s-%d", DIS_TXN_PREFIX, txn.CommitTime)
+	if _, err := co.zkConn.Set(txnKey, encodeTxn, 1); err != nil {
+		log.Println(err)
 		return err
 	}
 	return nil

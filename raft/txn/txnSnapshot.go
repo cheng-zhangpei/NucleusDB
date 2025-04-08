@@ -9,11 +9,24 @@ type TxnSnapshot struct {
 	PendingReads map[uint64]*Operation
 	// 事务时间戳
 	StartWatermark uint64
-	commitTime     uint64
+	CommitTime     uint64
 	// 冲突检测用的key指纹
 	ConflictKeys map[uint64]struct{}
 	// 统一顺序存储
 	Operations []*Operation
+}
+
+func NewTxnSnapshot() *TxnSnapshot {
+	return &TxnSnapshot{
+		PendingWrite:        make(map[uint64]*Operation),
+		pendingRepeatWrites: make(map[uint64]*Operation),
+		PendingReads:        make(map[uint64]*Operation),
+		// 初始化水位线设置为0
+		StartWatermark: 0,
+		CommitTime:     0,
+		ConflictKeys:   make(map[uint64]struct{}),
+		Operations:     make([]*Operation, 0),
+	}
 }
 
 // Set 写入数据
@@ -77,5 +90,5 @@ func (txn *TxnSnapshot) Discard() {
 	txn.pendingRepeatWrites = make(map[uint64]*Operation)
 	txn.PendingReads = make(map[uint64]*Operation)
 	txn.StartWatermark = 0
-	txn.commitTime = 0
+	txn.CommitTime = 0
 }

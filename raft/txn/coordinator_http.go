@@ -2,6 +2,7 @@ package txn
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
@@ -12,7 +13,7 @@ type CoordinatorHTTP struct {
 }
 
 // NewCoordinatorHTTP 创建带HTTP服务的协调者
-func NewCoordinatorHTTP(zkAddr, httpAddr string) *CoordinatorHTTP {
+func NewCoordinatorHTTP(zkAddr, httpAddr string) {
 	coordinator := NewCoordinator(zkAddr)
 
 	// 创建HTTP服务器
@@ -30,13 +31,10 @@ func NewCoordinatorHTTP(zkAddr, httpAddr string) *CoordinatorHTTP {
 	mux.HandleFunc("/save-snapshot", coordinatorHTTP.handleSaveSnapshotHTTP)
 
 	// 启动服务器
-	go func() {
-		if err := coordinatorHTTP.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			panic("HTTP server failed: " + err.Error())
-		}
-	}()
-
-	return coordinatorHTTP
+	log.Printf("coordinator http server have been started on %s\n", httpAddr)
+	if err := coordinatorHTTP.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		panic("HTTP server failed: " + err.Error())
+	}
 }
 
 // HTTP请求响应结构体
@@ -52,7 +50,7 @@ type conflictCheckResponse struct {
 }
 
 type saveSnapshotRequest struct {
-	Snapshot TxnSnapshot `json:"snapshot"`
+	Snapshot *TxnSnapshot `json:"snapshot"`
 }
 
 // HTTP处理函数
@@ -87,8 +85,8 @@ func (ch *CoordinatorHTTP) handleSaveSnapshotHTTP(w http.ResponseWriter, r *http
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	if err := ch.saveSnapshot(&req.Snapshot, ch.zkConn); err != nil {
+	// 这里需要实例化快照
+	if err := ch.saveSnapshot(req.Snapshot, ch.zkConn); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

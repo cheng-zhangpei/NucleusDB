@@ -874,6 +874,7 @@ type Message struct {
 	TxnPhase      TransactionPhase    `protobuf:"varint,15,opt,name=txn_phase,json=txnPhase,proto3,enum=pb.TransactionPhase" json:"txn_phase,omitempty"` // 事务阶段
 	TxnPackage    *TransactionPackage `protobuf:"bytes,16,opt,name=txn_package,json=txnPackage,proto3" json:"txn_package,omitempty"`
 	StartTxnTime  uint64              `protobuf:"varint,17,opt,name=startTxnTime,proto3" json:"startTxnTime,omitempty"`
+	LogicTime     uint64              `protobuf:"varint,18,opt,name=logicTime,proto3" json:"logicTime,omitempty"` // 用于记录当前逻辑时间
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1020,6 +1021,13 @@ func (x *Message) GetStartTxnTime() uint64 {
 	return 0
 }
 
+func (x *Message) GetLogicTime() uint64 {
+	if x != nil {
+		return x.LogicTime
+	}
+	return 0
+}
+
 type TxnResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Success         bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -1140,7 +1148,7 @@ const file_raft_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x05 \x03(\v2\x10.pb.TxnOperationR\n" +
 	"operations\x12;\n" +
-	"\x10compensation_ops\x18\x06 \x03(\v2\x10.pb.TxnOperationR\x0fcompensationOps\"\x85\x04\n" +
+	"\x10compensation_ops\x18\x06 \x03(\v2\x10.pb.TxnOperationR\x0fcompensationOps\"\xa3\x04\n" +
 	"\aMessage\x12#\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x0f.pb.MessageTypeR\x04type\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\x04R\x02to\x12\x12\n" +
@@ -1161,7 +1169,8 @@ const file_raft_proto_rawDesc = "" +
 	"\ttxn_phase\x18\x0f \x01(\x0e2\x14.pb.TransactionPhaseR\btxnPhase\x127\n" +
 	"\vtxn_package\x18\x10 \x01(\v2\x16.pb.TransactionPackageR\n" +
 	"txnPackage\x12\"\n" +
-	"\fstartTxnTime\x18\x11 \x01(\x04R\fstartTxnTime\"\x8c\x01\n" +
+	"\fstartTxnTime\x18\x11 \x01(\x04R\fstartTxnTime\x12\x1c\n" +
+	"\tlogicTime\x18\x12 \x01(\x04R\tlogicTime\"\x8c\x01\n" +
 	"\vTxnResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x15\n" +
 	"\x06txn_id\x18\x02 \x01(\tR\x05txnId\x12)\n" +

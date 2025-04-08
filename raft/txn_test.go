@@ -22,7 +22,6 @@ func Test_NodeTxn(t *testing.T) {
 	httpAddr := config1.HttpServerAddr
 	id := config1.ID
 	t.Logf("Testing node %d at %s", id, httpAddr)
-
 	// --- 辅助函数：发送请求并自动处理 Leader 重定向 ---
 	sendRequestToLeader := func(method, url string, body io.Reader) (*http.Response, error) {
 		maxRetries := 3 // 最大重试次数

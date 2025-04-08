@@ -111,7 +111,7 @@ message Message {
   TransactionPhase txn_phase = 15;     // 事务阶段
   TransactionPackage txn_package = 16;
   uint64 startTxnTime = 17;
-
+  uint64 logicTime = 18; // 用于记录当前逻辑时间
 }
 // ---------------------------
 // 新增枚举类型

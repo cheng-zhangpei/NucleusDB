@@ -1,9 +1,11 @@
 package txn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/go-zookeeper/zk"
+	"log"
 	"path"
 	"strconv"
 	"strings"
@@ -20,6 +22,7 @@ type zookeeperConn struct {
 	connected bool
 	sessionID int64
 	mutex     sync.Mutex // 保证线程安全
+	closeChan chan struct{}
 }
 
 // NewZookeeperConn 创建连接实例
@@ -28,14 +31,14 @@ func NewZookeeperConn(servers []string, timeout time.Duration, acl []zk.ACL) *zo
 		acl = zk.WorldACL(zk.PermAll)
 	}
 	return &zookeeperConn{
-		servers: servers,
-		timeout: timeout,
-		acl:     acl,
+		servers:   servers,
+		timeout:   timeout,
+		acl:       acl,
+		closeChan: make(chan struct{}),
 	}
 }
 
 // ================= 连接管理 =================
-
 func (zc *zookeeperConn) Connect() error {
 	zc.mutex.Lock()
 	defer zc.mutex.Unlock()
@@ -44,32 +47,63 @@ func (zc *zookeeperConn) Connect() error {
 		return nil
 	}
 
-	conn, eventChan, err := zk.Connect(zc.servers, zc.timeout, zk.WithLogInfo(false))
+	conn, eventChan, err := zk.Connect(zc.servers, zc.timeout,
+		zk.WithLogInfo(false),
+	)
 	if err != nil {
+		log.Println(err)
 		return fmt.Errorf("ZK连接失败: %v", err)
 	}
 
-	// 增加更全面的状态检查
+	zc.conn = conn
+	zc.eventChan = eventChan
+	zc.startEventLoop() // 启动事件监听
+
+	// 等待连接确认
+	ctx, cancel := context.WithTimeout(context.Background(), zc.timeout)
+	defer cancel()
+
 	for {
 		select {
 		case event := <-eventChan:
-			switch event.State {
-			case zk.StateConnected, zk.StateHasSession:
-				zc.conn = conn
-				zc.eventChan = eventChan
+			if event.State == zk.StateConnected {
 				zc.connected = true
 				zc.sessionID = conn.SessionID()
 				return nil
-			case zk.StateExpired, zk.StateDisconnected:
-				conn.Close()
-				return fmt.Errorf("连接失败，最终状态: %v", event.State)
 			}
-			// 其他状态继续等待
-		case <-time.After(zc.timeout):
+			if event.State == zk.StateExpired {
+				conn.Close()
+				return fmt.Errorf("session expired")
+			}
+		case <-ctx.Done():
 			conn.Close()
 			return errors.New("连接超时")
+		case <-zc.closeChan:
+			conn.Close()
+			return errors.New("连接已关闭")
 		}
 	}
+}
+
+func (zc *zookeeperConn) startEventLoop() {
+	go func() {
+		for {
+			select {
+			case event := <-zc.eventChan:
+				zc.mutex.Lock()
+				switch event.State {
+				case zk.StateDisconnected, zk.StateExpired:
+					zc.connected = false
+					zc.conn.Close() // 确保连接关闭
+				case zk.StateConnected:
+					zc.connected = true
+				}
+				zc.mutex.Unlock()
+			case <-zc.closeChan:
+				return
+			}
+		}
+	}()
 }
 
 func (zc *zookeeperConn) Close() {
@@ -131,11 +165,40 @@ func (zc *zookeeperConn) Set(path string, data []byte, version int32) (*zk.Stat,
 	zc.mutex.Lock()
 	defer zc.mutex.Unlock()
 
+	// 带指数退避的重试机制
+	var lastErr error
 	if !zc.connected {
-		return nil, errors.New("连接未建立")
+		if err := zc.Connect(); err != nil {
+			return nil, err
+		}
 	}
 
-	return zc.conn.Set(path, data, version)
+	// 先尝试更新现有节点
+	stat, err := zc.conn.Set(path, data, -1) // version=-1表示匹配任意版本
+	switch {
+	case err == nil:
+		return stat, nil
+	case zk.ErrNoNode == err:
+		// 节点不存在则创建
+		_, err = zc.conn.Create(path, data, 0, zk.WorldACL(zk.PermAll))
+		if err == nil {
+			// 创建成功后获取最新状态
+			_, stat, err := zc.conn.Exists(path)
+			return stat, err
+		}
+		if err != nil {
+			log.Println(err)
+		}
+		lastErr = err
+	case zk.ErrSessionExpired == err:
+		zc.connected = false
+		lastErr = err
+	default:
+		lastErr = err
+	}
+	// 指数退避等待 --> 这个和CSMA的思维的冲突逼退思维一样
+	log.Println(lastErr)
+	return nil, fmt.Errorf("SafeSet失败，最终错误: %v", lastErr)
 }
 
 // Delete 删除节点
@@ -227,16 +290,30 @@ func isLowestSequence(children []string, seq string) bool {
 	return true
 }
 
-// GetByPrefix 获取指定前缀的所有键值对，key为时间戳(uint64)
 func (zc *zookeeperConn) GetSnapshotByPrefix(prefix string) (map[uint64][]byte, error) {
+	// 带重试的获取逻辑
+	result, err := zc.tryGetSnapshotByPrefix(prefix)
+	if err == nil {
+		return result, nil
+	}
+
+	// 会话级错误需要完全重建连接
+	if isSessionError(err) {
+		zc.forceReconnect()
+	}
+	return nil, err
+}
+
+func (zc *zookeeperConn) tryGetSnapshotByPrefix(prefix string) (map[uint64][]byte, error) {
 	zc.mutex.Lock()
 	defer zc.mutex.Unlock()
 
 	if !zc.connected {
-		return nil, errors.New("连接未建立")
+		if err := zc.Connect(); err != nil {
+			return nil, err
+		}
 	}
 
-	// 获取所有子节点
 	children, _, err := zc.conn.Children("/")
 	if err != nil {
 		return nil, fmt.Errorf("获取子节点失败: %v", err)
@@ -248,19 +325,38 @@ func (zc *zookeeperConn) GetSnapshotByPrefix(prefix string) (map[uint64][]byte, 
 			continue
 		}
 
-		// 提取时间戳部分（假设格式为 "prefix-timestamp"）
-		timestampStr := strings.TrimPrefix(child, prefix+"-")
-		timestamp, err := strconv.ParseUint(timestampStr, 10, 64)
+		// 提取时间戳
+		parts := strings.Split(child, "-")
+		if len(parts) < 2 {
+			continue
+		}
+
+		timestamp, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
 		if err != nil {
-			continue // 跳过格式不正确的节点
+			continue
 		}
 
 		data, _, err := zc.conn.Get("/" + child)
 		if err != nil {
-			return nil, fmt.Errorf("获取节点 %s 数据失败: %v", child, err)
+			continue // 跳过获取失败的节点
 		}
 
 		result[timestamp] = data
 	}
 	return result, nil
+}
+
+func isSessionError(err error) bool {
+	return errors.Is(err, zk.ErrConnectionClosed) ||
+		strings.Contains(err.Error(), "session expired")
+}
+
+func (zc *zookeeperConn) forceReconnect() {
+	zc.mutex.Lock()
+	defer zc.mutex.Unlock()
+
+	if zc.conn != nil {
+		zc.conn.Close()
+	}
+	zc.connected = false
 }

@@ -9,18 +9,20 @@ type ProgressMap map[uint64]*Progress
 
 // ProgressTracker 跟踪 Raft 集群的进度和投票信息。(executed by leader) progressTracker(leader) -> progress(followers)
 type ProgressTracker struct {
-	MaxInflight int
-	Progress    ProgressMap     // 各节点的进度
-	Votes       map[uint64]bool // 投票信息
+	MaxInflight  int
+	Progress     ProgressMap     // 各节点的进度
+	Votes        map[uint64]bool // 投票信息
+	TxnCommitted map[uint64]bool // follower事务提交记录
 }
 
 // MakeProgressTracker 初始化一个 ProgressTracker 实例。
 func MakeProgressTracker(maxInflight int) *ProgressTracker {
 	// 这里没有创建prs中的环形缓冲区
 	return &ProgressTracker{
-		MaxInflight: maxInflight,
-		Progress:    make(ProgressMap), // 如果这个没有初始化就会导致无法发送心跳
-		Votes:       make(map[uint64]bool),
+		MaxInflight:  maxInflight,
+		Progress:     make(ProgressMap), // 如果这个没有初始化就会导致无法发送心跳
+		Votes:        make(map[uint64]bool),
+		TxnCommitted: make(map[uint64]bool),
 	}
 }
 

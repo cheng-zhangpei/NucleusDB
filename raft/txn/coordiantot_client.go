@@ -18,7 +18,7 @@ type CoordinatorClient struct {
 func NewCoordinatorClient(serverAddr string) *CoordinatorClient {
 	return &CoordinatorClient{
 		baseURL:    "http://" + serverAddr,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{Timeout: 50 * time.Second},
 	}
 }
 
@@ -34,7 +34,6 @@ func (c *CoordinatorClient) HandleConflictCheck(checkKeys []uint64, startTime, c
 	if err != nil {
 		return false, fmt.Errorf("marshal request failed: %v", err)
 	}
-
 	resp, err := c.httpClient.Post(c.baseURL+"/conflict-check", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return false, fmt.Errorf("HTTP request failed: %v", err)
@@ -57,7 +56,7 @@ func (c *CoordinatorClient) HandleConflictCheck(checkKeys []uint64, startTime, c
 }
 
 // SaveSnapshot 客户端保存快照方法
-func (c *CoordinatorClient) SaveSnapshot(snapshot TxnSnapshot) error {
+func (c *CoordinatorClient) SaveSnapshot(snapshot *TxnSnapshot) error {
 	req := saveSnapshotRequest{Snapshot: snapshot}
 	body, err := json.Marshal(req)
 	if err != nil {

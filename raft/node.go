@@ -386,6 +386,8 @@ func (n *node) handleRaftPut(writer http.ResponseWriter, request *http.Request) 
 		log.Printf("only leader can put value. Current leader ID: %d\n", leaderID)
 		return
 	}
+	// 此处需要判断该事务暂存区中是否有数据
+
 	for key, value := range kv {
 		var logData = []byte("PUT " + key + " " + value)
 		msg := &msgWithResult{
@@ -649,6 +651,14 @@ func (n *node) handleTxnPut(writer http.ResponseWriter, request *http.Request) {
 		log.Printf("Failed to decode request body: %v\n", err)
 		return
 	}
+	if n.IsTxnSnapshotEmpty() {
+		startTime, err := n.rn.raft.TxnGetTimestamp()
+		if err != nil {
+			log.Fatalln("timestamp allocation failed", err)
+			return
+		}
+		n.rn.raft.txnSnapshot.StartWatermark = startTime
+	}
 	leaderID := n.rn.raft.lead
 	if n.rn.raft.state != StateLeader {
 		// 只返回 leader 的 ID
@@ -691,13 +701,21 @@ func (n *node) handleTxnDelete(writer http.ResponseWriter, request *http.Request
 		log.Printf("only leader can delete value. Current leader ID: %d\n", leaderID)
 		return
 	}
+
 	key := request.URL.Query().Get("key")
 	if key == "" {
 		http.Error(writer, "Key is required", http.StatusBadRequest)
 		log.Println("Failed to delete: key is missing")
 		return
 	}
-
+	if n.IsTxnSnapshotEmpty() {
+		startTime, err := n.rn.raft.TxnGetTimestamp()
+		if err != nil {
+			log.Fatalln("timestamp allocation failed", err)
+			return
+		}
+		n.rn.raft.txnSnapshot.StartWatermark = startTime
+	}
 	err := n.rn.raft.txnSnapshot.Delete([]byte(key))
 	if err != nil {
 		return
@@ -722,6 +740,14 @@ func (n *node) handleTxnGet(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	key := request.URL.Query().Get("key")
+	if n.IsTxnSnapshotEmpty() {
+		startTime, err := n.rn.raft.TxnGetTimestamp()
+		if err != nil {
+			log.Fatalln("timestamp allocation failed", err)
+			return
+		}
+		n.rn.raft.txnSnapshot.StartWatermark = startTime
+	}
 	err := n.rn.raft.txnSnapshot.Get([]byte(key))
 	if err != nil {
 		return
@@ -832,4 +858,18 @@ func registerRPCServer(n *node, addr string) {
 			panic(err)
 		}
 	}()
+}
+
+// IsTxnSnapshotEmpty 判断当前事务是否处于初始化状态
+func (n *node) IsTxnSnapshotEmpty() bool {
+	// 1. 直接访问结构体字段（假设调用方已确保n.rn.raft非空）
+	snapshot := n.rn.raft.txnSnapshot
+
+	// 2. 检查所有可能存储数据的字段
+	return len(snapshot.PendingWrite) == 0 &&
+		len(snapshot.PendingReads) == 0 &&
+		len(snapshot.ConflictKeys) == 0 &&
+		len(snapshot.Operations) == 0 &&
+		snapshot.StartWatermark == 0 &&
+		snapshot.CommitTime == 0
 }
