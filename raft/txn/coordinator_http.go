@@ -81,12 +81,13 @@ func (ch *CoordinatorHTTP) handleConflictCheckHTTP(w http.ResponseWriter, r *htt
 
 func (ch *CoordinatorHTTP) handleSaveSnapshotHTTP(w http.ResponseWriter, r *http.Request) {
 	var req saveSnapshotRequest
-	if err := json.NewDecoder(r.Body).Decode(&req.Snapshot); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { // 解析整个结构体
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// 这里需要实例化快照
-	if err := ch.saveSnapshot(req.Snapshot, ch.zkConn); err != nil {
+
+	log.Printf("Received Snapshot: %+v", req.Snapshot)
+	if err := ch.saveSnapshot(req.Snapshot); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -51,13 +51,13 @@ func (zc *zookeeperConn) Connect() error {
 		zk.WithLogInfo(false),
 	)
 	if err != nil {
-		log.Println(err)
 		return fmt.Errorf("ZK连接失败: %v", err)
 	}
 
 	zc.conn = conn
 	zc.eventChan = eventChan
-	zc.startEventLoop() // 启动事件监听
+
+	// 启动事件循环（但先不处理事件，只确保事件不被丢弃）
 
 	// 等待连接确认
 	ctx, cancel := context.WithTimeout(context.Background(), zc.timeout)
@@ -65,10 +65,11 @@ func (zc *zookeeperConn) Connect() error {
 
 	for {
 		select {
-		case event := <-eventChan:
+		case event := <-eventChan: // 直接监听 eventChan
 			if event.State == zk.StateConnected {
 				zc.connected = true
 				zc.sessionID = conn.SessionID()
+				zc.startEventLoop()
 				return nil
 			}
 			if event.State == zk.StateExpired {
@@ -87,25 +88,19 @@ func (zc *zookeeperConn) Connect() error {
 
 func (zc *zookeeperConn) startEventLoop() {
 	go func() {
-		for {
-			select {
-			case event := <-zc.eventChan:
-				zc.mutex.Lock()
-				switch event.State {
-				case zk.StateDisconnected, zk.StateExpired:
-					zc.connected = false
-					zc.conn.Close() // 确保连接关闭
-				case zk.StateConnected:
-					zc.connected = true
-				}
-				zc.mutex.Unlock()
-			case <-zc.closeChan:
-				return
+		for event := range zc.eventChan {
+			zc.mutex.Lock()
+			switch event.State {
+			case zk.StateDisconnected, zk.StateExpired:
+				zc.connected = false
+				zc.conn.Close()
+			case zk.StateConnected:
+				zc.connected = true
 			}
+			zc.mutex.Unlock()
 		}
 	}()
 }
-
 func (zc *zookeeperConn) Close() {
 	zc.mutex.Lock()
 	defer zc.mutex.Unlock()
@@ -321,26 +316,30 @@ func (zc *zookeeperConn) tryGetSnapshotByPrefix(prefix string) (map[uint64][]byt
 
 	result := make(map[uint64][]byte)
 	for _, child := range children {
+		child = fmt.Sprintf("/%s", child)
 		if !strings.HasPrefix(child, prefix) {
+			log.Println(err)
 			continue
 		}
 
 		// 提取时间戳
 		parts := strings.Split(child, "-")
 		if len(parts) < 2 {
+			log.Println(err)
 			continue
 		}
 
 		timestamp, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
 		if err != nil {
+			log.Println(err)
 			continue
 		}
+		data, _, err := zc.conn.Get(child)
 
-		data, _, err := zc.conn.Get("/" + child)
 		if err != nil {
+			log.Println(err)
 			continue // 跳过获取失败的节点
 		}
-
 		result[timestamp] = data
 	}
 	return result, nil

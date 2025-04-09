@@ -1,25 +1,19 @@
 package txn
 
 type TxnSnapshot struct {
-	// 当前最新写入操作 (key hash => Operation)
-	PendingWrite map[uint64]*Operation
-	// 同一key的多次写入历史 (仅保留前一次写入)
-	pendingRepeatWrites map[uint64]*Operation
-	// 读操作记录 (key hash => operation)
-	PendingReads map[uint64]*Operation
-	// 事务时间戳
-	StartWatermark uint64
-	CommitTime     uint64
-	// 冲突检测用的key指纹
-	ConflictKeys map[uint64]struct{}
-	// 统一顺序存储
-	Operations []*Operation
+	PendingWrite        map[uint64]*Operation `json:"pendingWrite"`
+	PendingRepeatWrites map[uint64]*Operation `json:"pendingRepeatWrites"` // 改为大写
+	PendingReads        map[uint64]*Operation `json:"pendingReads"`
+	StartWatermark      uint64                `json:"startWatermark"`
+	CommitTime          uint64                `json:"commitTime"`
+	ConflictKeys        map[uint64]struct{}   `json:"conflictKeys"`
+	Operations          []*Operation          `json:"operations"`
 }
 
 func NewTxnSnapshot() *TxnSnapshot {
 	return &TxnSnapshot{
 		PendingWrite:        make(map[uint64]*Operation),
-		pendingRepeatWrites: make(map[uint64]*Operation),
+		PendingRepeatWrites: make(map[uint64]*Operation),
 		PendingReads:        make(map[uint64]*Operation),
 		// 初始化水位线设置为0
 		StartWatermark: 0,
@@ -42,7 +36,7 @@ func (txn *TxnSnapshot) Put(key, value []byte) error {
 
 	// 如果已有写入，将旧值移到duplicateWrites
 	if oldOp, exists := txn.PendingWrite[hash]; exists {
-		txn.pendingRepeatWrites[hash] = oldOp
+		txn.PendingRepeatWrites[hash] = oldOp
 	}
 
 	txn.PendingWrite[hash] = op
@@ -77,7 +71,7 @@ func (txn *TxnSnapshot) Delete(key []byte) error {
 
 	// 如果已有写入，将旧值移到duplicateWrites
 	if oldOp, exists := txn.PendingWrite[hash]; exists {
-		txn.pendingRepeatWrites[hash] = oldOp
+		txn.PendingRepeatWrites[hash] = oldOp
 	}
 
 	txn.PendingWrite[hash] = op
@@ -87,7 +81,7 @@ func (txn *TxnSnapshot) Delete(key []byte) error {
 // Discard 清空事务
 func (txn *TxnSnapshot) Discard() {
 	txn.PendingWrite = make(map[uint64]*Operation)
-	txn.pendingRepeatWrites = make(map[uint64]*Operation)
+	txn.PendingRepeatWrites = make(map[uint64]*Operation)
 	txn.PendingReads = make(map[uint64]*Operation)
 	txn.StartWatermark = 0
 	txn.CommitTime = 0

@@ -16,7 +16,7 @@ const DIS_TXN_PREFIX = "/distributed_transaction_hashKey_prefix"
 
 type Coordinator struct {
 	// 水位线管理接口与单机数据库的MVCC结构一致
-	waterMark *watermark
+	WaterMark *watermark
 	// zookeeper连接
 	zkAddr string
 	zkConn *zookeeperConn
@@ -24,9 +24,9 @@ type Coordinator struct {
 	timeSegment uint64
 }
 type Operation struct {
-	Cmd   string // PUT/GET/DELETE
-	Key   []byte
-	Value []byte
+	Cmd   string `json:"cmd"`   // 可导出
+	Key   []byte `json:"key"`   // 可导出
+	Value []byte `json:"value"` // 可导出
 }
 
 // TxnSnapshot 需要保存在zk中的数据
@@ -39,14 +39,14 @@ func NewCoordinator(zkAddr string) *Coordinator {
 	return &Coordinator{
 		zkAddr:    zkAddr,
 		zkConn:    zkConn,
-		waterMark: watermark,
+		WaterMark: watermark,
 	}
 }
 
 // handleConflictCheck 处理分布式情况下的冲突检测
 func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, startTime uint64, commitTs uint64) (bool, error) {
 	// 加载所有位于水位线中的的快照
-	timeRange := co.waterMark.GetTimeRange(startTime, commitTs)
+	timeRange := co.WaterMark.GetTimeRange(startTime, commitTs)
 	// 连接zk
 	if !co.zkConn.connected {
 		err := co.zkConn.Connect()
@@ -54,13 +54,12 @@ func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, sta
 			return false, err
 		}
 	}
-
 	// 根据时间范围从zookeeper中获取快照数据信息
 	snapshots, err := co.zkConn.GetSnapshotByPrefix(DIS_TXN_PREFIX)
 	if err != nil {
 		return false, err
 	}
-	if snapshots == nil {
+	if len(snapshots) == 0 {
 		return false, nil
 	}
 	ConflictKeysSet := make(map[uint64]struct{})
@@ -72,7 +71,7 @@ func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, sta
 		for key, _ := range txnSnapshot.PendingWrite {
 			ConflictKeysSet[key] = struct{}{}
 		}
-		for key, _ := range txnSnapshot.pendingRepeatWrites {
+		for key, _ := range txnSnapshot.PendingRepeatWrites {
 			ConflictKeysSet[key] = struct{}{}
 		}
 	}
@@ -86,7 +85,7 @@ func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, sta
 
 }
 
-func (co *Coordinator) saveSnapshot(txn *TxnSnapshot, zkConn *zookeeperConn) error {
+func (co *Coordinator) saveSnapshot(txn *TxnSnapshot) error {
 	if txn == nil {
 		return errors.New("txn is nil")
 	}
@@ -98,6 +97,8 @@ func (co *Coordinator) saveSnapshot(txn *TxnSnapshot, zkConn *zookeeperConn) err
 			return err
 		}
 	}
+	// 暂时先添加水位线的操作
+	co.WaterMark.AddCommitTime(txn.CommitTime)
 	txnKey := fmt.Sprintf("%s-%d", DIS_TXN_PREFIX, txn.CommitTime)
 	if _, err := co.zkConn.Set(txnKey, encodeTxn, 1); err != nil {
 		log.Println(err)

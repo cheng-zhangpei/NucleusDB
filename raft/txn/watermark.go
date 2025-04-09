@@ -47,7 +47,7 @@ func UInt64Comparator(a, b interface{}) int {
 	}
 }
 
-func (w *watermark) addCommitTime(commitTime uint64) {
+func (w *watermark) AddCommitTime(commitTime uint64) {
 	w.timesHeap.Enqueue(commitTime)
 
 	// 如果堆大小超过 maxSize，移除最旧元素（堆顶）

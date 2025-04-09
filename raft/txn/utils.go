@@ -20,7 +20,7 @@ func EncodeTxn(txn *TxnSnapshot) []byte {
 
 	// 编码各字段（顺序必须与解码保持一致）
 	buf = encodeMap(buf, &index, txn.PendingWrite)
-	buf = encodeMap(buf, &index, txn.pendingRepeatWrites)
+	buf = encodeMap(buf, &index, txn.PendingRepeatWrites)
 	buf = encodeMap(buf, &index, txn.PendingReads)
 	buf = encodeConflictKeys(buf, &index, txn.ConflictKeys)
 	buf = encodeOperations(buf, &index, txn.Operations)
@@ -124,13 +124,12 @@ func encodeStrings(buf []byte, index *int, strs []string) []byte {
 func DecodeTxn(data []byte) *TxnSnapshot {
 	txn := &TxnSnapshot{
 		PendingWrite:        make(map[uint64]*Operation),
-		pendingRepeatWrites: make(map[uint64]*Operation),
+		PendingRepeatWrites: make(map[uint64]*Operation),
 		PendingReads:        make(map[uint64]*Operation),
 		ConflictKeys:        make(map[uint64]struct{}),
 	}
 
 	var index int
-
 	// 解码时间戳
 	txn.StartWatermark = binary.LittleEndian.Uint64(data[index:])
 	index += 8
@@ -139,7 +138,7 @@ func DecodeTxn(data []byte) *TxnSnapshot {
 
 	// 按编码顺序解码各字段
 	txn.PendingWrite = decodeMap(data, &index)
-	txn.pendingRepeatWrites = decodeMap(data, &index)
+	txn.PendingRepeatWrites = decodeMap(data, &index)
 	txn.PendingReads = decodeMap(data, &index)
 	txn.ConflictKeys = decodeConflictKeys(data, &index)
 	txn.Operations = decodeOperations(data, &index)

@@ -1185,7 +1185,6 @@ func (r *raft) TxnCommit() {
 		detailCmd := ""
 		switch cmd {
 		case pb.OperationType_OP_PUT:
-
 			detailCmd = fmt.Sprintf("PUT %s %s", key, value)
 		case pb.OperationType_OP_DELETE:
 			detailCmd = fmt.Sprintf("DELETE %s", key)
@@ -1235,7 +1234,16 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 			checkList = append(checkList, key)
 		}
 		// 此处的CommitTs是follower的提交时间，
-		commitTs := txn.GetCurrenTime()
+		logicalTs, err := r.leaseManager.GetTimestamp()
+		if err != nil {
+			return err
+		}
+		commitTs, err := txn.GenerateHybridTs(logicalTs)
+		if err != nil {
+			return err
+		}
+		// 将混合时钟放入水位线中
+		r.coordinator.WaterMark.AddCommitTime(commitTs)
 		hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, commitTs)
 		if err != nil {
 			return err

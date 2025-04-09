@@ -652,6 +652,7 @@ func (n *node) handleTxnPut(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if n.IsTxnSnapshotEmpty() {
+		// 获得开始事件的混合时间戳
 		startTime, err := n.rn.raft.TxnGetTimestamp()
 		if err != nil {
 			log.Fatalln("timestamp allocation failed", err)
