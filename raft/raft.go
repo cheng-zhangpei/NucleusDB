@@ -392,7 +392,7 @@ func (r *raft) becomeLeader() {
 	r.leaseManager.LeaderId = strconv.FormatUint(r.id, 10)
 
 	logicalTs, err := r.leaseManager.AcquireLease()
-	log.Printf("raft node[%d] acquired lease at term %d\n and logical timestamp:%d", r.id, r.Term, r.logicalTs)
+	log.Printf("raft node[%d] acquired lease at term %d and logical timestamp:%d", r.id, r.Term, r.logicalTs)
 	if err != nil {
 		panic(err)
 	}
@@ -488,7 +488,6 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		msg := r.TxnSnapshotToMsg()
 		r.sendTxnRequest(msg)
 	}
-
 	return nil
 }
 
@@ -719,7 +718,7 @@ func (r *raft) send(msg *pb.Message) {
 	if msg.From == None {
 		msg.From = r.id
 	}
-	if msg.Type == pb.MessageType_MsgVote || msg.Type == pb.MessageType_MsgVoteResp {
+	if msg.Type == pb.MessageType_MsgVote || msg.Type == pb.MessageType_MsgVoteResp || msg.Type == pb.MessageType_MsgCommitTxn {
 		if msg.Term == 0 {
 			panic(fmt.Sprintf("term should be set when sending %s", msg.Type))
 		}
@@ -1120,6 +1119,8 @@ func (r *raft) handleTxnRequest(msg *pb.Message) {
 	// message需要将当前全局逻辑段也发送给follower
 	GlobalLogicTime := r.txnSnapshot.StartWatermark
 	CommitTs, _ := txn.GenerateHybridTs(GlobalLogicTime)
+	log.Printf("node %d generate hybird timestamp %d", r.id, CommitTs)
+
 	// 此时的提交时间是混合时钟
 	r.txnSnapshot.CommitTime = CommitTs
 	// 这里并不需要担心时钟偏移因为冲突的计算只会根据
@@ -1244,6 +1245,7 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 		}
 		// 此处的CommitTs是follower的提交时间，
 		commitTs, err := txn.GenerateHybridTs(r.logicalTs)
+		log.Printf("node %d generate hybird timestamp %d", r.id, commitTs)
 		if err != nil {
 			return err
 		}

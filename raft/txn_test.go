@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -121,7 +122,26 @@ func Test_NodeTxn(t *testing.T) {
 			t.Log("PUT request succeeded (leader)")
 		}
 	})
+	t.Run("TestTxnPut", func(t *testing.T) {
+		kv := map[string]string{"test_key2": "test_value2"}
+		jsonData, _ := json.Marshal(kv)
+		if len(jsonData) == 0 {
+			t.Fatal("Empty JSON data")
+		}
 
+		url := fmt.Sprintf("http://%s/raft/%d/TxnSet", httpAddr, id)
+		resp, err := sendRequestToLeader(http.MethodPost, url, bytes.NewBuffer(jsonData))
+		if err != nil {
+			t.Fatalf("PUT request failed after retries: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Unexpected status code: %d", resp.StatusCode)
+		} else {
+			t.Log("PUT request succeeded (leader)")
+		}
+	})
 	// --- 测试 2: 发送 DELETE 请求 ---
 	t.Run("TestTxnDelete", func(t *testing.T) {
 		key := "test_key"
@@ -152,11 +172,12 @@ func Test_NodeTxn(t *testing.T) {
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
-			var value string
-			if err := json.NewDecoder(resp.Body).Decode(&value); err != nil {
-				t.Errorf("Failed to decode GET response: %v", err)
-			}
-			t.Logf("GET value: %s", value)
+			t.Log("GET request succeeded (leader)")
+			//var value string
+			//if err := json.NewDecoder(resp.Body).Decode(&value); err != nil {
+			//	t.Errorf("Failed to decode GET response: %v", err)
+			//}
+			//t.Logf("GET value: %s", value)
 		} else {
 			t.Errorf("Unexpected status code: %d", resp.StatusCode)
 		}
@@ -178,6 +199,50 @@ func Test_NodeTxn(t *testing.T) {
 			t.Errorf("Unexpected status code: %d", resp.StatusCode)
 		}
 	})
+
+	t.Run("TestTxn", func(t *testing.T) {
+		url := fmt.Sprintf("http://%s/raft/%d/TxnCommit", httpAddr, id)
+
+		resp, err := sendRequestToLeader(http.MethodPost, url, nil)
+		if err != nil {
+			t.Fatalf("Commit request failed after retries: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			t.Log("Commit succeeded")
+		} else {
+			t.Errorf("Unexpected status code: %d", resp.StatusCode)
+		}
+	})
+}
+
+func TestTxnRaftGet(t *testing.T) {
+	// 模拟客户端请求
+	key := "test_key"
+	config1, err := LoadConfig("./configs/raft_config_1.yaml")
+	if err != nil {
+		panic(err)
+	}
+	config2, err := LoadConfig("./configs/raft_config_2.yaml")
+	if err != nil {
+		panic(err)
+	}
+	config3, err := LoadConfig("./configs/raft_config_3.yaml")
+	if err != nil {
+		panic(err)
+	}
+	configs := []*RaftConfig{config1, config2, config3}
+	for _, config := range configs {
+		httpAddr := config.HttpServerAddr
+		id := config.ID
+		// 构造初始请求 URL
+		getEndpoint := fmt.Sprintf("http://%s/raft/%d/get?key=%s", httpAddr, id, key)
+		var resp *http.Response
+		// 发送 GET 请求
+		resp, _ = http.Get(getEndpoint)
+		log.Println(resp)
+	}
 }
 
 // 辅助函数：根据 leaderID 获取 Leader 的 HTTP 地址

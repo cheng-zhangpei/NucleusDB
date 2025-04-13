@@ -212,6 +212,7 @@ func (n *node) run() {
 
 			case <-txnc:
 				// 只有leader可以接受事务请求
+				log.Printf("node %d get txn commit signal! \n", r.id)
 				if r.state != StateLeader {
 					log.Printf("raft.node: %x rejected txn prop because it is not the leader\n", r.id)
 					continue
@@ -272,36 +273,25 @@ func (n *node) Tick() {
 	}
 }
 func sendMessages(sleepTime time.Duration, n *node) {
-	// 启动一个 goroutine 来处理消息发送
 	go func() {
 		log.Printf("[Raft Node %d]start sending messages go routine......\n", n.rn.raft.id)
-		// 创建一个互斥锁，以确保线程安全地访问暂存区
 		var mutex sync.Mutex
 		for {
-			// 锁定互斥锁，确保线程安全地访问暂存区
 			mutex.Lock()
-			// 检查暂存区是否有消息
 			if len(n.rn.raft.msgs) > 0 {
-				// 获取暂存区中的消息
-				msg := n.rn.raft.msgs
-				// 更新暂存区，移除已发送的消息
-				n.rn.raft.msgs = make([]*pb.Message, 0)
-				// 解锁互斥锁
+				// 复制切片内容到新切片-> 多个线程共享切片底层数组，在并发修改时导致数据竞争，旧数据被回收后访问无效内存。
+				msg := make([]*pb.Message, len(n.rn.raft.msgs))
+				copy(msg, n.rn.raft.msgs)
+				n.rn.raft.msgs = make([]*pb.Message, 0) // 清空原切片
 				mutex.Unlock()
-				// 发送消息的逻辑
 				if err := sendAllCache(msg, n); err != nil {
 					log.Printf("Error sending message: %v", err)
 				}
 			} else {
-				// 如果暂存区为空，解锁互斥锁
 				mutex.Unlock()
-
 			}
-			// todo 为了保证消息处理的及时性这里直接让调度器帮我们决定啥时候去调用这个发送信息的线程了
-			// 根据传入的睡眠时间进行等待，避免 CPU 过高占用
-			//time.Sleep(time.Millisecond * sleepTime)
-			// 检查是否所有消息都已发送完成
-
+			// 适当加入休眠避免CPU空转
+			time.Sleep(time.Millisecond * sleepTime)
 		}
 	}()
 }
@@ -721,10 +711,17 @@ func (n *node) handleTxnDelete(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	if n.rn.raft.state != StateLeader {
+		leaderID := n.rn.raft.lead
+		if leaderID < 1 || int(leaderID) > len(n.httpServerAddrList) {
+			http.Error(writer, "Invalid leader ID", http.StatusInternalServerError)
+			log.Printf("Invalid leader ID: %d", leaderID)
+			return
+		}
+		leaderAddr := n.httpServerAddrList[leaderID-1]
 		writer.Header().Set("Content-Type", "text/plain")
-		writer.WriteHeader(http.StatusForbidden)                        // 403 表示非 Leader
-		fmt.Fprintf(writer, "%s", n.httpServerAddrList[n.rn.raft.lead]) // 返回 leaderID（uint64）
-		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
+		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
 		return
 	}
 	// 将当前的leader信息返回
@@ -769,10 +766,17 @@ func (n *node) handleTxnGet(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if n.rn.raft.state != StateLeader {
+		leaderID := n.rn.raft.lead
+		if leaderID < 1 || int(leaderID) > len(n.httpServerAddrList) {
+			http.Error(writer, "Invalid leader ID", http.StatusInternalServerError)
+			log.Printf("Invalid leader ID: %d", leaderID)
+			return
+		}
+		leaderAddr := n.httpServerAddrList[leaderID-1]
 		writer.Header().Set("Content-Type", "text/plain")
-		writer.WriteHeader(http.StatusForbidden)                        // 403 表示非 Leader
-		fmt.Fprintf(writer, "%s", n.httpServerAddrList[n.rn.raft.lead]) // 返回 leaderID（uint64）
-		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
+		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
 		return
 	}
 	key := request.URL.Query().Get("key")
@@ -794,6 +798,20 @@ func (n *node) handleTxnGet(writer http.ResponseWriter, request *http.Request) {
 // 在node层面的commit需要由用户控制
 func (n *node) handleTxnCommit(writer http.ResponseWriter, request *http.Request) {
 	// 这里才是真正发送信号的地方
+	if n.rn.raft.state != StateLeader {
+		leaderID := n.rn.raft.lead
+		if leaderID < 1 || int(leaderID) > len(n.httpServerAddrList) {
+			http.Error(writer, "Invalid leader ID", http.StatusInternalServerError)
+			log.Printf("Invalid leader ID: %d", leaderID)
+			return
+		}
+		leaderAddr := n.httpServerAddrList[leaderID-1]
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
+		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
+		return
+	}
 	n.txnc <- struct{}{}
 }
 
