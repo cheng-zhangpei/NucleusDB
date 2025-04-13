@@ -105,7 +105,6 @@ func Open(options Options) (*DB, error) {
 		if err := db.loadIndexFromDataFiles(); err != nil {
 			return nil, err
 		}
-
 		// 修改IO
 		if err := db.resetIoType(); err != nil {
 			return nil, err

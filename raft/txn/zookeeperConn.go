@@ -46,7 +46,7 @@ func (zc *zookeeperConn) Connect() error {
 	if zc.connected {
 		return nil
 	}
-
+	log.Println(zc.servers)
 	conn, eventChan, err := zk.Connect(zc.servers, zc.timeout,
 		zk.WithLogInfo(false),
 	)

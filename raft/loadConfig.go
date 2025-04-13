@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -26,7 +27,7 @@ func LoadConfig(configPath string) (*RaftConfig, error) {
 	if err := yaml.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-
+	log.Println(config)
 	return config, nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,9 +71,10 @@ type RaftConfig struct {
 	GRPCClientAddr            []string      `yaml:"grpc_client_addr" env:"GRPC_CLIENT_ADDRS" envSeparator:","`
 	TickInterval              time.Duration `yaml:"tick_interval" env:"TICK_INTERVAL"`
 	HttpServerAddr            string        `yaml:"http_server_addr" env:"HTTP_SERVER_ADDR"`
+	HttpServerAddrs           []string      `yaml:"http_server_addrs" env:"HTTP_SERVER_ADDRS"`
 	InflghtsMaxSize           int           `yaml:"inflghts_max_size" env:"INFLIGHTS_MAX_SIZE"`
-	zkAddr                    string        `yaml:"zkAddr" env:"ZKADDR"`
-	CoordinatorServerAddr     string        `yaml:"CoordinatorServerAddr" env:"COORDINATORSERVERADDR"`
+	zookeeprAddr              string        `yaml:"zookeeper_addr" env:"ZKADDR"`
+	CoordinatorServerAddr     string        `yaml:"coordinator_server_addr" env:"COORDINATORSERVERADDR"`
 }
 
 // validate raft config validation
@@ -139,8 +141,7 @@ type raft struct {
 	coordinator    *txn.Coordinator
 	leaseManager   *txn.TimestampLeaseManager
 	// 事务上下界时间戳
-	minTimeAllocate uint64
-	maxTimeAllocate uint64
+	logicalTs uint64
 	// 事务数据暂存区
 	txnSnapshot *txn.TxnSnapshot
 	txnBuffer   []*pb.TxnOperation
@@ -161,17 +162,20 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 	//if err != nil {
 	//	panic(err)
 	//}
-	coordinator := txn.NewCoordinator(config.zkAddr)
+	config.zookeeprAddr = "127.0.0.1:2181"
+	coordinator := txn.NewCoordinator(config.zookeeprAddr)
 	electionTimeout := configElectionTimeout(config.TickInterval)
 	heartbeatTimeout := configHeartbeatTimeout(time.Duration(electionTimeout), config.TickInterval)
 	appl, err := newApplication(options, config.ID)
-	zkConn := txn.NewZookeeperConn([]string{config.zkAddr}, 5*time.Second, nil)
+	zkConn := txn.NewZookeeperConn([]string{config.zookeeprAddr}, 5*time.Second, nil)
 	leaseManager := txn.NewTimestampLeaseManager(zkConn, "")
 	txnBuffer := make([]*pb.TxnOperation, 0)
 	coorClient := txn.NewCoordinatorClient(config.CoordinatorServerAddr)
+	txnSnapshot := txn.NewTxnSnapshot()
 	if err != nil {
 		panic(err)
 	}
+
 	r := &raft{
 		id: config.ID,
 
@@ -192,7 +196,7 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 		coordinator:        coordinator,
 		leaseManager:       leaseManager,
 		txnBuffer:          txnBuffer,
-		txnSnapshot:        nil,
+		txnSnapshot:        txnSnapshot,
 		coordinatorClient:  coorClient,
 	}
 	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
@@ -208,12 +212,12 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 		progress := tracker.NewProgress(config.InflghtsMaxSize)
 		r.processTracker.Progress[uint64(i)] = progress
 	}
-	// todo 在状态机中加载已经应用的数据,这里还是需要区分暂存区的日志index与全局日志的index,已经应用的信息往
-	// todo 往已经从暂存区中删除了
-	//if c.Applied > 0 {
-	//	raftlog.appliedTo(c.Applied)
-	//}
-	// 在初始化的时候节点只能是Follower
+
+	//todo 这个清除租约的位置是否可以放到别的位置？
+	err = r.leaseManager.ReleaseLease()
+	if err != nil {
+		log.Println(err)
+	}
 	r.becomeFollower(r.Term, None)
 	return r
 }
@@ -348,7 +352,14 @@ func (r *raft) tickHeartbeat() {
 	}
 }
 
-func (r *raft) becomeFollower(term uint64, lead uint64) {
+// todo 此处释放租约的错误处理
+func (r *raft) becomeFollower(term uint64, lead uint64) error {
+	if r.state == StateLeader {
+		err := r.leaseManager.ReleaseLease()
+		if err != nil {
+			return err
+		}
+	}
 	r.step = stepFollower
 	r.reset(term)
 	r.tick = r.tickElection
@@ -357,6 +368,7 @@ func (r *raft) becomeFollower(term uint64, lead uint64) {
 	r.step = stepFollower
 	r.isLeader = false
 	log.Printf("%x became follower at term %d\n", r.id, r.Term)
+	return nil
 }
 
 func (r *raft) becomeCandidate() {
@@ -377,17 +389,20 @@ func (r *raft) becomeLeader() {
 	if r.state == StateFollower {
 		panic("invalid transition [follower -> leader]")
 	}
+	r.leaseManager.LeaderId = strconv.FormatUint(r.id, 10)
+
+	logicalTs, err := r.leaseManager.AcquireLease()
+	log.Printf("raft node[%d] acquired lease at term %d\n and logical timestamp:%d", r.id, r.Term, r.logicalTs)
+	if err != nil {
+		panic(err)
+	}
+	r.logicalTs = logicalTs
 	r.step = stepLeader
 	r.reset(r.Term)
 	r.tick = r.tickHeartbeat
 	r.lead = r.id
 	r.state = StateLeader
 	r.isLeader = true
-	// todo 此处的错误处理暂时还没有做
-	minTimeAllocate, maxTimeAllocate, _ := r.leaseManager.AcquireLease()
-
-	r.minTimeAllocate = minTimeAllocate
-	r.maxTimeAllocate = maxTimeAllocate
 
 	// 这里不要往里面去放一个空白的日志，我的index是从0开始的
 	//r.reduceUncommittedSize([]pb.Entry{emptyEnt})
@@ -449,7 +464,6 @@ func stepLeader(r *raft, msg *pb.Message) error {
 					// we have more entries to send, send as many messages as we
 					// can (without sending empty messages for the commit index)
 					for r.maybeSendAppend(msg.From, false) {
-
 					}
 				}
 			}
@@ -471,7 +485,6 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		// 这个时候Leader收到CommitTxn请求而启动日志处理，这里是独立于基础操作之外的一个另一个操作所以需要重新定义执行逻辑
 		pr.RecentActive = true
 		// 封装message
-		// todo 发送信息之前暂时先设置对应的startTs并且需要把这个时间发送给
 		msg := r.TxnSnapshotToMsg()
 		r.sendTxnRequest(msg)
 	}
@@ -523,14 +536,14 @@ func stepCandidate(r *raft, msg *pb.Message) error {
 		log.Fatalf("%x no leader at term %d; dropping proposal\n", r.id, r.Term)
 		return ErrProposalDropped
 	case pb.MessageType_MsgApp:
-		r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
+		_ = r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
 		r.handleAppendEntries(msg)
 		println()
 	case pb.MessageType_MsgHeartbeat:
-		r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
+		_ = r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
 		r.handleHeartbeat(msg)
 	case pb.MessageType_MsgAppResp:
-		r.becomeFollower(r.Term, None)
+		_ = r.becomeFollower(r.Term, None)
 		return nil
 	case pb.MessageType_MsgVoteResp:
 		r.handleVoteResponse(msg)
@@ -613,10 +626,10 @@ func (r *raft) Step(msg *pb.Message) error {
 		// 如果是投票请求消息，将当前节点转变为跟随者，领导者 ID 设置为 None
 		case pb.MessageType_MsgVote:
 			log.Printf("Raft Node %d get vote request from node %d", r.id, msg.From)
-			r.becomeFollower(msg.Term, None)
+			_ = r.becomeFollower(msg.Term, None)
 		// 对于其他消息类型，将当前节点转变为跟随者，并更新领导者 ID 为消息发送者 ID
 		default:
-			r.becomeFollower(msg.Term, msg.From)
+			_ = r.becomeFollower(msg.Term, msg.From)
 		}
 	}
 	// 根据消息类型处理不同消息
@@ -1206,11 +1219,7 @@ func (r *raft) TxnCommit() {
 }
 
 func (r *raft) TxnGetTimestamp() (uint64, error) {
-	logicalTs, err := r.leaseManager.GetTimestamp()
-	if err != nil {
-		return 0, err
-	}
-	hyTs, err := txn.GenerateHybridTs(logicalTs)
+	hyTs, err := txn.GenerateHybridTs(r.logicalTs)
 	if err != nil {
 		return 0, err
 	}
@@ -1234,11 +1243,7 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 			checkList = append(checkList, key)
 		}
 		// 此处的CommitTs是follower的提交时间，
-		logicalTs, err := r.leaseManager.GetTimestamp()
-		if err != nil {
-			return err
-		}
-		commitTs, err := txn.GenerateHybridTs(logicalTs)
+		commitTs, err := txn.GenerateHybridTs(r.logicalTs)
 		if err != nil {
 			return err
 		}

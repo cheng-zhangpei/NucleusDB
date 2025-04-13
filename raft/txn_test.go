@@ -24,42 +24,72 @@ func Test_NodeTxn(t *testing.T) {
 	t.Logf("Testing node %d at %s", id, httpAddr)
 	// --- 辅助函数：发送请求并自动处理 Leader 重定向 ---
 	sendRequestToLeader := func(method, url string, body io.Reader) (*http.Response, error) {
-		maxRetries := 3 // 最大重试次数
-		for i := 0; i < maxRetries; i++ {
-			var resp *http.Response
-			var err error
+		maxRetries := 3
+		var bodyBytes []byte
+		var err error
 
-			// 根据方法发送请求
+		// 缓存请求体内容
+		if body != nil {
+			bodyBytes, err = io.ReadAll(body)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read request body: %v", err)
+			}
+		}
+
+		for i := 0; i < maxRetries; i++ {
+			var reqBody io.Reader
+			if len(bodyBytes) > 0 {
+				reqBody = bytes.NewReader(bodyBytes) // 每次重试使用缓存的请求体
+			}
+
+			var resp *http.Response
 			if method == http.MethodGet {
 				resp, err = http.Get(url)
 			} else {
-				resp, err = http.Post(url, "application/json", body)
+				resp, err = http.Post(url, "application/json", reqBody)
 			}
-
 			if err != nil {
 				return nil, err
 			}
 
-			// 如果是 Leader 处理成功，直接返回
+			// 成功则直接返回
 			if resp.StatusCode == http.StatusOK {
 				return resp, nil
 			}
 
-			// 如果不是 Leader，解析 Leader ID 并更新 URL
+			// 处理重定向逻辑
+			// 现在其实可以稍微总结一下这个过程了，writer其实就是往body里面写入字节流罢了，字节流可以在这里用io.readAll全部读出来
 			if resp.StatusCode == http.StatusForbidden {
-				leaderBytes, _ := io.ReadAll(resp.Body)
+				redirectBody, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
-				leaderID, _ := strconv.ParseUint(string(leaderBytes), 10, 64)
 
-				// 查找 Leader 的 HTTP 地址（这里假设 config 中有所有节点的信息）
-				// 实际项目中可能需要从集群配置或服务发现获取
-				leaderAddr := getLeaderAddr(leaderID) // 需要实现 getLeaderAddr
-				if leaderAddr == "" {
-					return nil, fmt.Errorf("failed to find leader address for ID %d", leaderID)
+				var leaderID uint64
+				var leaderAddr string
+				pairs := strings.Split(string(redirectBody), ",")
+				for _, pair := range pairs {
+					kv := strings.Split(pair, "=")
+					if len(kv) != 2 {
+						continue
+					}
+					switch kv[0] {
+					case "LeaderID":
+						leaderID, _ = strconv.ParseUint(kv[1], 10, 64)
+					case "LeaderAddr":
+						leaderAddr = kv[1]
+					}
 				}
 
-				// 更新 URL，准备重试
-				url = fmt.Sprintf("http://%s/raft/%d%s", leaderAddr, leaderID, strings.TrimPrefix(url, fmt.Sprintf("http://%s/raft/%d", httpAddr, id)))
+				if leaderAddr == "" {
+					return nil, fmt.Errorf("leader address is empty")
+				}
+
+				// 构造新 URL
+				url = fmt.Sprintf(
+					"http://%s/raft/%d%s",
+					leaderAddr,
+					leaderID,
+					strings.TrimPrefix(url, fmt.Sprintf("http://%s/raft/%d", httpAddr, id)),
+				)
 				t.Logf("Redirecting to leader %d at %s", leaderID, leaderAddr)
 				continue
 			}
@@ -74,6 +104,9 @@ func Test_NodeTxn(t *testing.T) {
 	t.Run("TestTxnPut", func(t *testing.T) {
 		kv := map[string]string{"test_key": "test_value"}
 		jsonData, _ := json.Marshal(kv)
+		if len(jsonData) == 0 {
+			t.Fatal("Empty JSON data")
+		}
 
 		url := fmt.Sprintf("http://%s/raft/%d/TxnSet", httpAddr, id)
 		resp, err := sendRequestToLeader(http.MethodPost, url, bytes.NewBuffer(jsonData))
@@ -82,10 +115,10 @@ func Test_NodeTxn(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode == http.StatusOK {
-			t.Log("PUT request succeeded (leader)")
-		} else {
+		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Unexpected status code: %d", resp.StatusCode)
+		} else {
+			t.Log("PUT request succeeded (leader)")
 		}
 	})
 

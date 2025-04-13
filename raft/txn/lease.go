@@ -35,26 +35,29 @@ var (
 
 // LeaseInfo 租约信息结构体
 type LeaseInfo struct {
-	Start      uint64 `json:"start"`
-	End        uint64 `json:"end"`
+	LogicalTs  uint64 `json:"start"`
 	SessionID  int64  `json:"session_id"`  // 关联的ZK会话ID
 	LeaderName string `json:"leader_name"` // Leader标识
 }
 
 // TimestampLeaseManager 时间戳租约管理器
 type TimestampLeaseManager struct {
-	zc           *zookeeperConn
+	Zc           *zookeeperConn
 	currentLease *LeaseInfo
-	leaderID     string
+	LeaderId     string
 	stopChan     chan struct{}
 	mu           sync.RWMutex
 }
 
 // NewTimestampLeaseManager 创建租约管理器
-func NewTimestampLeaseManager(zc *zookeeperConn, leaderID string) *TimestampLeaseManager {
+func NewTimestampLeaseManager(zc *zookeeperConn, LeaderId string) *TimestampLeaseManager {
+	err := zc.Connect()
+	if err != nil {
+		panic(err)
+	}
 	return &TimestampLeaseManager{
-		zc:       zc,
-		leaderID: leaderID,
+		Zc:       zc,
+		LeaderId: LeaderId,
 		stopChan: make(chan struct{}),
 	}
 }
@@ -62,18 +65,18 @@ func NewTimestampLeaseManager(zc *zookeeperConn, leaderID string) *TimestampLeas
 // ================= 核心租约管理方法 =================
 
 // AcquireLease 申请新的时间戳租约（阻塞式）
-func (tm *TimestampLeaseManager) AcquireLease() (uint64, uint64, error) {
+func (tm *TimestampLeaseManager) AcquireLease() (uint64, error) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	// 确保基础路径存在,如果不存在会初始化时间比如0
 	if err := tm.ensureBasePaths(); err != nil {
-		return 0, 0, fmt.Errorf("初始化路径失败: %v", err)
+		return 0, err
 	}
 	// 使用CAS循环直到成功获取租约
 	for {
 		select {
 		case <-tm.stopChan:
-			return 0, 0, errors.New("租约获取已中止")
+			return 0, errors.New("租约获取已中止")
 		default:
 			// 获取当前全局指针
 			currentPointer, version, err := tm.getGlobalPointer()
@@ -83,39 +86,35 @@ func (tm *TimestampLeaseManager) AcquireLease() (uint64, uint64, error) {
 			}
 
 			// 计算新租约范围
-			newStart := currentPointer + 1
-			newEnd := newStart + DefaultLeaseBatch - 1
+			LogicalTs := currentPointer + 1
 
 			// 尝试原子更新全局指针
-			if ok, err := tm.casGlobalPointer(currentPointer, newEnd, version); err != nil {
+			if ok, err := tm.casGlobalPointer(currentPointer, version); err != nil {
 				continue
 			} else if ok {
 				// 创建临时租约节点
-				leasePath := path.Join(ActiveLeasesPath, tm.leaderID)
+				leasePath := path.Join(ActiveLeasesPath, tm.LeaderId)
 				leaseData, _ := json.Marshal(LeaseInfo{
-					Start:      newStart,
-					End:        newEnd,
-					SessionID:  tm.zc.sessionID,
-					LeaderName: tm.leaderID,
+					LogicalTs:  LogicalTs,
+					SessionID:  tm.Zc.sessionID,
+					LeaderName: tm.LeaderId,
 				})
 
-				_, err := tm.zc.Create(leasePath, leaseData, zk.FlagEphemeral)
+				_, err := tm.Zc.Create(leasePath, leaseData, zk.FlagEphemeral)
 				if err != nil {
 					// 回滚全局指针
-					tm.rollbackGlobalPointer(newEnd, currentPointer)
-					return 0, 0, fmt.Errorf("创建租约节点失败: %v", err)
+					tm.rollbackGlobalPointer(LogicalTs, currentPointer)
+					return 0, fmt.Errorf("创建租约节点失败: %v", err)
 				}
-
 				tm.currentLease = &LeaseInfo{
-					Start:      newStart,
-					End:        newEnd,
-					SessionID:  tm.zc.sessionID,
-					LeaderName: tm.leaderID,
+					LogicalTs:  LogicalTs,
+					SessionID:  tm.Zc.sessionID,
+					LeaderName: tm.LeaderId,
 				}
 
 				// 启动后台租约维护
 				go tm.leaseMaintenanceLoop()
-				return newStart, newEnd, nil
+				return LogicalTs, nil
 			}
 			// CAS失败，等待后重试
 			time.Sleep(100 * time.Millisecond)
@@ -127,7 +126,6 @@ func (tm *TimestampLeaseManager) AcquireLease() (uint64, uint64, error) {
 func (tm *TimestampLeaseManager) RenewLease() error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-
 	if tm.currentLease == nil {
 		return ErrLeaseNotHeld
 	}
@@ -138,26 +136,18 @@ func (tm *TimestampLeaseManager) RenewLease() error {
 		return err
 	}
 
-	// 必须基于当前租约的end值续期
-	if currentPointer != tm.currentLease.End {
-		return fmt.Errorf("租约状态不一致，当前全局指针:%d 本地租约结束:%d",
-			currentPointer, tm.currentLease.End)
-	}
-
-	newEnd := currentPointer + DefaultLeaseBatch
-	if ok, err := tm.casGlobalPointer(currentPointer, newEnd, version); err != nil {
+	// 修改新的逻辑时钟
+	newPointer := currentPointer + 1
+	if ok, err := tm.casGlobalPointer(newPointer, version); err != nil {
 		return err
 	} else if !ok {
 		return ErrCASFailed
 	}
 
-	// 更新本地租约信息
-	tm.currentLease.End = newEnd
-
 	// 更新临时节点数据
-	leasePath := path.Join(ActiveLeasesPath, tm.leaderID)
+	leasePath := path.Join(ActiveLeasesPath, tm.LeaderId)
 	leaseData, _ := json.Marshal(tm.currentLease)
-	_, err = tm.zc.Set(leasePath, leaseData, -1)
+	_, err = tm.Zc.Set(leasePath, leaseData, -1)
 	return err
 }
 
@@ -169,12 +159,10 @@ func (tm *TimestampLeaseManager) ReleaseLease() error {
 	if tm.currentLease == nil {
 		return nil
 	}
-
-	leasePath := path.Join(ActiveLeasesPath, tm.leaderID)
-	if err := tm.zc.Delete(leasePath, -1); err != nil && err != zk.ErrNoNode {
+	leasePath := path.Join(ActiveLeasesPath, tm.LeaderId)
+	if err := tm.Zc.Delete(leasePath, -1); err != nil && !errors.Is(err, zk.ErrNoNode) {
 		return err
 	}
-
 	tm.currentLease = nil
 	close(tm.stopChan)
 	return nil
@@ -187,35 +175,29 @@ func (tm *TimestampLeaseManager) GetTimestamp() (uint64, error) {
 	if tm.currentLease == nil {
 		return 0, ErrLeaseNotHeld
 	}
-	if tm.currentLease.Start > tm.currentLease.End {
-		// 如果时间段分配过时则返回时间段已经全部分配
-		return 0, ErrLeaseExhausted
-	}
 	// 不断将start
-	ts := tm.currentLease.Start
-	tm.currentLease.Start++
-	return ts, nil
+	return tm.currentLease.LogicalTs, nil
 }
 
 // ================= 辅助方法 =================
 
 // ensureBasePaths 确保基础路径存在
 func (tm *TimestampLeaseManager) ensureBasePaths() error {
-	if _, err := tm.zc.Create(TimestampLeaseBase, nil, 0); err != nil && err != zk.ErrNodeExists {
+	if _, err := tm.Zc.Create(TimestampLeaseBase, nil, 0); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		return err
 	}
-	if _, err := tm.zc.Create(ActiveLeasesPath, nil, 0); err != nil && err != zk.ErrNodeExists {
+	if _, err := tm.Zc.Create(ActiveLeasesPath, nil, 0); !errors.Is(err, zk.ErrNodeExists) && err != nil {
 		return err
 	}
 	// 初始化全局指针节点
-	exists, _, err := tm.zc.conn.Exists(GlobalPointerPath)
+	exists, _, err := tm.Zc.conn.Exists(GlobalPointerPath)
 	if err != nil {
 		return err
 	}
 	if !exists {
 		initData := make([]byte, 8)
 		binary.BigEndian.PutUint64(initData, 0)
-		if _, err := tm.zc.Create(GlobalPointerPath, initData, 0); err != nil && err != zk.ErrNodeExists {
+		if _, err := tm.Zc.Create(GlobalPointerPath, initData, 0); !errors.Is(err, zk.ErrNodeExists) && err != nil {
 			return err
 		}
 	}
@@ -224,7 +206,7 @@ func (tm *TimestampLeaseManager) ensureBasePaths() error {
 
 // getGlobalPointer 获取当前全局指针值和版本号
 func (tm *TimestampLeaseManager) getGlobalPointer() (uint64, int32, error) {
-	data, stat, err := tm.zc.Get(GlobalPointerPath)
+	data, stat, err := tm.Zc.Get(GlobalPointerPath)
 	if err != nil {
 		return 0, -1, err
 	}
@@ -235,12 +217,12 @@ func (tm *TimestampLeaseManager) getGlobalPointer() (uint64, int32, error) {
 }
 
 // casGlobalPointer Compare-and-Swap更新全局指针
-func (tm *TimestampLeaseManager) casGlobalPointer(oldVal, newVal uint64, version int32) (bool, error) {
+func (tm *TimestampLeaseManager) casGlobalPointer(newVal uint64, version int32) (bool, error) {
 	newData := make([]byte, 8)
 	binary.BigEndian.PutUint64(newData, newVal)
 
-	stat, err := tm.zc.Set(GlobalPointerPath, newData, version)
-	if err == zk.ErrBadVersion {
+	stat, err := tm.Zc.Set(GlobalPointerPath, newData, version)
+	if errors.Is(err, zk.ErrBadVersion) {
 		return false, nil
 	}
 	if err != nil {
@@ -267,7 +249,7 @@ func (tm *TimestampLeaseManager) rollbackGlobalPointer(current, target uint64) {
 			if err != nil {
 				return
 			}
-			if _, err := tm.zc.Set(GlobalPointerPath, data, ver); err == nil {
+			if _, err := tm.Zc.Set(GlobalPointerPath, data, ver); err == nil {
 				return
 			}
 		}
@@ -284,38 +266,10 @@ func (tm *TimestampLeaseManager) leaseMaintenanceLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			tm.checkLeaseStatus()
+			// todo 租约时钟循环维护
 		case <-tm.stopChan:
 			return
 		}
-	}
-}
-
-// checkLeaseStatus 检查租约状态
-func (tm *TimestampLeaseManager) checkLeaseStatus() {
-	tm.mu.RLock()
-	currentLease := tm.currentLease
-	tm.mu.RUnlock()
-
-	if currentLease == nil {
-		return
-	}
-
-	// 检查剩余量是否低于阈值
-	remaining := currentLease.End - currentLease.Start + 1
-	if remaining <= LeaseRenewThreshold {
-		if err := tm.RenewLease(); err != nil {
-			fmt.Printf("租约续期失败: %v\n", err)
-		}
-	}
-
-	// 验证租约节点是否存在
-	leasePath := path.Join(ActiveLeasesPath, tm.leaderID)
-	exists, _, err := tm.zc.conn.Exists(leasePath)
-	if err != nil || !exists {
-		fmt.Println("租约节点丢失，触发重新获取")
-		tm.ReleaseLease()
-		tm.AcquireLease()
 	}
 }
 
@@ -323,14 +277,14 @@ func (tm *TimestampLeaseManager) checkLeaseStatus() {
 
 // GetAllActiveLeases 获取所有活跃租约（调试用）
 func (tm *TimestampLeaseManager) GetAllActiveLeases() (map[string]LeaseInfo, error) {
-	children, _, err := tm.zc.conn.Children(ActiveLeasesPath)
+	children, _, err := tm.Zc.conn.Children(ActiveLeasesPath)
 	if err != nil {
 		return nil, err
 	}
 
 	leases := make(map[string]LeaseInfo)
 	for _, child := range children {
-		data, _, err := tm.zc.conn.Get(path.Join(ActiveLeasesPath, child))
+		data, _, err := tm.Zc.conn.Get(path.Join(ActiveLeasesPath, child))
 		if err != nil {
 			continue
 		}

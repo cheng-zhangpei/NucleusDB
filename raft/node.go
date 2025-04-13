@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -64,6 +65,9 @@ type node struct {
 	rn *RawNode
 	// use it for send message
 	client []*RaftClient
+
+	// 记录所有的raft节点的httpserver地址用于与客户端的节点通讯
+	httpServerAddrList []string
 }
 
 type raftServer struct {
@@ -130,12 +134,13 @@ func newNode(rn *RawNode, config *RaftConfig) *node {
 		// make tickc a buffered chan, so raft node can bFuffer some ticks when the node
 		// is busy processing raft messages. Raft node will resume process buffered
 		// ticks when it becomes idle.
-		tickc:  make(chan struct{}, 1024),
-		done:   make(chan struct{}),
-		stop:   make(chan struct{}),
-		status: make(chan chan *BaseStatus),
-		rn:     rn,
-		client: NewRaftClient(config.GRPCClientAddr, config.GRPCServerAddr),
+		tickc:              make(chan struct{}, 1024),
+		done:               make(chan struct{}),
+		stop:               make(chan struct{}),
+		status:             make(chan chan *BaseStatus),
+		rn:                 rn,
+		client:             NewRaftClient(config.GRPCClientAddr, config.GRPCServerAddr),
+		httpServerAddrList: config.HttpServerAddrs,
 	}
 }
 
@@ -316,14 +321,14 @@ func sendAllCache(msgs []*pb.Message, n *node) error {
 				// 将消息放入接收通道
 				select {
 				case n.recvc <- response:
-					// 消息已成功放入通道
+				// 消息已成功放入通道
 				default:
 					// 通道已满，无法放入消息
 					log.Printf("recvc channel is full, message dropped")
 				}
 			}
 		}
-		// 发送之后的数据需要从暂存区中清除
+		//发送之后的数据需要从暂存区中清除
 		//msgs[i] = nil // 将已发送的消息标记为 nil
 	}
 	//removeNilMessages(msgs)
@@ -632,51 +637,81 @@ func (n *node) handleCreateMeta(writer http.ResponseWriter, request *http.Reques
 // =========================================后面是事务相关的handler============================================
 // handleTxnPut 处理事务PUT
 func (n *node) handleTxnPut(writer http.ResponseWriter, request *http.Request) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic in handleTxnPut: %v", r)
+			writer.WriteHeader(http.StatusInternalServerError)
+		}
+	}()
 
+	// 方法检查
 	if request.Method != http.MethodPost {
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if n.rn.raft.state != StateLeader {
-		writer.Header().Set("Content-Type", "text/plain")
-		writer.WriteHeader(http.StatusForbidden)  // 403 表示非 Leader
-		fmt.Fprintf(writer, "%d", n.rn.raft.lead) // 返回 leaderID（uint64）
-		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
-		return
-	}
-	var kv map[string]string
 
-	if err := json.NewDecoder(request.Body).Decode(&kv); err != nil {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
-		log.Printf("Failed to decode request body: %v\n", err)
+	// 读取请求体
+	bodyBytes, err := io.ReadAll(request.Body)
+	if err != nil {
+		http.Error(writer, "Failed to read request body", http.StatusBadRequest)
+		log.Printf("Failed to read request body: %v", err)
 		return
 	}
+	defer request.Body.Close()
+
+	// 检查空请求体
+	if len(bodyBytes) == 0 {
+		http.Error(writer, "Empty request body", http.StatusBadRequest)
+		log.Println("Empty request body")
+		return
+	}
+
+	// 解析 JSON
+	var kv map[string]string
+	if err := json.Unmarshal(bodyBytes, &kv); err != nil {
+		http.Error(writer, "Invalid JSON format", http.StatusBadRequest)
+		log.Printf("Failed to decode JSON: %v", err)
+		return
+	}
+
+	// 检查是否为 Leader
+	if n.rn.raft.state != StateLeader {
+		leaderID := n.rn.raft.lead
+		if leaderID < 1 || int(leaderID) > len(n.httpServerAddrList) {
+			http.Error(writer, "Invalid leader ID", http.StatusInternalServerError)
+			log.Printf("Invalid leader ID: %d", leaderID)
+			return
+		}
+		leaderAddr := n.httpServerAddrList[leaderID-1]
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
+		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
+		return
+	}
+
+	// 初始化 TxnSnapshot（如果为空）
 	if n.IsTxnSnapshotEmpty() {
-		// 获得开始事件的混合时间戳
 		startTime, err := n.rn.raft.TxnGetTimestamp()
 		if err != nil {
-			log.Fatalln("timestamp allocation failed", err)
+			http.Error(writer, "Failed to allocate timestamp", http.StatusInternalServerError)
+			log.Printf("Timestamp allocation failed: %v", err)
 			return
 		}
 		n.rn.raft.txnSnapshot.StartWatermark = startTime
 	}
-	leaderID := n.rn.raft.lead
-	if n.rn.raft.state != StateLeader {
-		// 只返回 leader 的 ID
-		writer.Header().Set("Content-Type", "text/plain")
-		writer.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(writer, leaderID)
-		log.Printf("only leader can put value. Current leader ID: %d\n", leaderID)
-		return
-	}
+
+	// 写入数据
 	for key, value := range kv {
-		// 这里直接将数据塞到raft结构的缓冲区中
-		err := n.rn.raft.txnSnapshot.Put([]byte(key), []byte(value))
-		if err != nil {
+		if err := n.rn.raft.txnSnapshot.Put([]byte(key), []byte(value)); err != nil {
+			http.Error(writer, "Failed to store data", http.StatusInternalServerError)
+			log.Printf("Failed to insert key-value pair: %v", err)
 			return
 		}
-		log.Printf("Key-value pair inserted successfully: key=%s, value=%s\n", key, value)
+		log.Printf("Key-value inserted: key=%s, value=%s", key, value)
 	}
+
+	writer.WriteHeader(http.StatusOK)
 }
 
 // 处理事务删除
@@ -687,8 +722,8 @@ func (n *node) handleTxnDelete(writer http.ResponseWriter, request *http.Request
 	}
 	if n.rn.raft.state != StateLeader {
 		writer.Header().Set("Content-Type", "text/plain")
-		writer.WriteHeader(http.StatusForbidden)  // 403 表示非 Leader
-		fmt.Fprintf(writer, "%d", n.rn.raft.lead) // 返回 leaderID（uint64）
+		writer.WriteHeader(http.StatusForbidden)                        // 403 表示非 Leader
+		fmt.Fprintf(writer, "%s", n.httpServerAddrList[n.rn.raft.lead]) // 返回 leaderID（uint64）
 		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
 		return
 	}
@@ -735,8 +770,8 @@ func (n *node) handleTxnGet(writer http.ResponseWriter, request *http.Request) {
 	}
 	if n.rn.raft.state != StateLeader {
 		writer.Header().Set("Content-Type", "text/plain")
-		writer.WriteHeader(http.StatusForbidden)  // 403 表示非 Leader
-		fmt.Fprintf(writer, "%d", n.rn.raft.lead) // 返回 leaderID（uint64）
+		writer.WriteHeader(http.StatusForbidden)                        // 403 表示非 Leader
+		fmt.Fprintf(writer, "%s", n.httpServerAddrList[n.rn.raft.lead]) // 返回 leaderID（uint64）
 		log.Printf("Current node is not leader. Leader ID: %d\n", n.rn.raft.lead)
 		return
 	}
@@ -787,7 +822,7 @@ func startRaftHttpServer(n *node, addr string) {
 	TxnSetRouter := fmt.Sprintf("/raft/%d/TxnSet", n.rn.raft.id)
 	TxnDeleteRouter := fmt.Sprintf("/raft/%d/TxnDelete", n.rn.raft.id)
 	TxnCommitRouter := fmt.Sprintf("/raft/%d/TxnCommit", n.rn.raft.id)
-	TxnGetResultRouter := fmt.Sprintf("/raft/%d/TxnCommit", n.rn.raft.id)
+	TxnGetResultRouter := fmt.Sprintf("/raft/%d/TxnGetResult", n.rn.raft.id)
 
 	// 注册 HTTP 处理函数
 	http.HandleFunc(putRouter, n.handleRaftPut)

@@ -31,7 +31,6 @@ func TestRaftNodeStart(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-
 	// 拿到数据库配置-注意一下哈，在每次启动的时候创建的数据目录全部都不一样，别到时候自己发现持久化有问题哈
 	options1 := ComDB.DefaultOptions
 	options2 := ComDB.DefaultOptions
