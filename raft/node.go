@@ -414,7 +414,7 @@ func (n *node) handleRaftGet(writer http.ResponseWriter, request *http.Request) 
 	if err == ComDB.ErrKeyNotFound {
 		log.Printf("Key not found: key=%s\n", key)
 	} else {
-		log.Printf("Successfully retrieved value for key: key=%s, value=%s\n", key, string(value))
+		log.Printf("%d Successfully retrieved value for key: key=%s, value=%s\n", n.rn.raft.id, key, string(value))
 	}
 
 	writer.Header().Set("Content-Type", "application/json")

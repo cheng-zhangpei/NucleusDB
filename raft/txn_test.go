@@ -208,7 +208,6 @@ func Test_NodeTxn(t *testing.T) {
 			t.Fatalf("Commit request failed after retries: %v", err)
 		}
 		defer resp.Body.Close()
-
 		if resp.StatusCode == http.StatusOK {
 			t.Log("Commit succeeded")
 		} else {
@@ -218,30 +217,37 @@ func Test_NodeTxn(t *testing.T) {
 }
 
 func TestTxnRaftGet(t *testing.T) {
-	// 模拟客户端请求
-	key := "test_key"
-	config1, err := LoadConfig("./configs/raft_config_1.yaml")
-	if err != nil {
-		panic(err)
-	}
-	config2, err := LoadConfig("./configs/raft_config_2.yaml")
-	if err != nil {
-		panic(err)
-	}
-	config3, err := LoadConfig("./configs/raft_config_3.yaml")
-	if err != nil {
-		panic(err)
-	}
-	configs := []*RaftConfig{config1, config2, config3}
+	key := "test_key2"
+
+	configs := loadTestConfigs(t) // 提取配置加载逻辑
+
 	for _, config := range configs {
-		httpAddr := config.HttpServerAddr
-		id := config.ID
-		// 构造初始请求 URL
-		getEndpoint := fmt.Sprintf("http://%s/raft/%d/get?key=%s", httpAddr, id, key)
-		var resp *http.Response
-		// 发送 GET 请求
-		resp, _ = http.Get(getEndpoint)
-		log.Println(resp)
+		t.Run(fmt.Sprintf("Node%d", config.ID), func(t *testing.T) {
+			getEndpoint := fmt.Sprintf("http://%s/raft/%d/get?key=%s",
+				config.HttpServerAddr, config.ID, key)
+
+			resp, err := http.Get(getEndpoint)
+			if err != nil {
+				t.Fatalf("HTTP GET failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			// 验证状态码
+			if resp.StatusCode != http.StatusOK &&
+				resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("Unexpected status code: %d", resp.StatusCode)
+			}
+
+			// 解析响应
+			var response struct {
+				Value string `json:"value"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+				t.Fatalf("JSON decode failed: %v", err)
+			}
+			log.Printf(response.Value)
+			// 验证结果
+		})
 	}
 }
 
@@ -250,4 +256,21 @@ func getLeaderAddr(leaderID uint64) string {
 	// 这里需要实现从配置或服务发现中查找 Leader 的地址
 	// 示例：硬编码或从全局配置中读取
 	return "127.0.0.1:8080" // 替换为实际逻辑
+}
+
+func loadTestConfigs(t *testing.T) []*RaftConfig {
+	// 提取公共配置加载逻辑
+	var configs []*RaftConfig
+	for _, path := range []string{
+		"./configs/raft_config_1.yaml",
+		"./configs/raft_config_2.yaml",
+		"./configs/raft_config_3.yaml",
+	} {
+		config, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("Load config failed: %v", err)
+		}
+		configs = append(configs, config)
+	}
+	return configs
 }

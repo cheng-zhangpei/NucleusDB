@@ -487,6 +487,12 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		// 封装message
 		msg := r.TxnSnapshotToMsg()
 		r.sendTxnRequest(msg)
+	case pb.MessageType_MsgCommitTxnResp:
+		// 对其他节点事务的回复进行处理
+		err := r.handleTxnCommitResp(msg)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1119,7 +1125,7 @@ func (r *raft) handleTxnRequest(msg *pb.Message) {
 	// message需要将当前全局逻辑段也发送给follower
 	GlobalLogicTime := r.txnSnapshot.StartWatermark
 	CommitTs, _ := txn.GenerateHybridTs(GlobalLogicTime)
-	log.Printf("node %d generate hybird timestamp %d", r.id, CommitTs)
+	log.Printf("leader node %d generate hybird timestamp %d", r.id, CommitTs)
 
 	// 此时的提交时间是混合时钟
 	r.txnSnapshot.CommitTime = CommitTs
@@ -1189,6 +1195,9 @@ func (r *raft) leaderHandleConflict() {
 
 // TxnCommit 这个函数的Commit的本质其实也只是将操作变为对应的日志的内容，也就是AppendEntry，由协程自动的将数据应用到状态机中
 func (r *raft) TxnCommit() {
+	if r.state == StateLeader {
+		log.Printf("leader %d start committing ...\n", r.id)
+	}
 	operations := r.txnBuffer
 	// 根据operations中的内容按照之前规定的Entry的格式进行添加
 	entrys := make([]*pb.Entry, 0)
@@ -1217,6 +1226,9 @@ func (r *raft) TxnCommit() {
 	r.app.commitc <- entrys
 	// 应用到状态机上
 	r.app.applyc <- getCommand(entrys)
+	if r.state == StateLeader {
+		log.Printf("leader %d finished committed\n", r.id)
+	}
 }
 
 func (r *raft) TxnGetTimestamp() (uint64, error) {
@@ -1232,17 +1244,24 @@ func (r *raft) TxnGetTimestamp() (uint64, error) {
 func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 	// 记录当前投票的follower
 	r.processTracker.TxnCommitted[msg.From] = true
+	poll := r.TxnPoll()
 	// 对投票情况进行仲裁
-	if r.TxnPoll() {
+	if poll {
+		log.Printf("通过poll")
+
 		// 将自身的事务快照提交并将其保存在zk中(注，快照需要保存在全局配置中心中)
 		err := r.coordinatorClient.SaveSnapshot(r.txnSnapshot)
 		if err != nil {
 			return err
 		}
+		log.Printf("快照保存完成")
+
 		checkList := make([]uint64, 0)
 		for key, _ := range r.txnSnapshot.ConflictKeys {
 			checkList = append(checkList, key)
 		}
+		log.Printf("生成混合时钟")
+
 		// 此处的CommitTs是follower的提交时间，
 		commitTs, err := txn.GenerateHybridTs(r.logicalTs)
 		log.Printf("node %d generate hybird timestamp %d", r.id, commitTs)
@@ -1251,6 +1270,7 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 		}
 		// 将混合时钟放入水位线中
 		r.coordinator.WaterMark.AddCommitTime(commitTs)
+		log.Printf("进行冲突检测")
 		hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, commitTs)
 		if err != nil {
 			return err
