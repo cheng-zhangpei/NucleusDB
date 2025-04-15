@@ -1247,20 +1247,18 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 	poll := r.TxnPoll()
 	// 对投票情况进行仲裁
 	if poll {
-		log.Printf("通过poll")
 
 		// 将自身的事务快照提交并将其保存在zk中(注，快照需要保存在全局配置中心中)
 		err := r.coordinatorClient.SaveSnapshot(r.txnSnapshot)
 		if err != nil {
+			log.Println(err)
 			return err
 		}
-		log.Printf("快照保存完成")
 
 		checkList := make([]uint64, 0)
 		for key, _ := range r.txnSnapshot.ConflictKeys {
 			checkList = append(checkList, key)
 		}
-		log.Printf("生成混合时钟")
 
 		// 此处的CommitTs是follower的提交时间，
 		commitTs, err := txn.GenerateHybridTs(r.logicalTs)
@@ -1270,7 +1268,6 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 		}
 		// 将混合时钟放入水位线中
 		r.coordinator.WaterMark.AddCommitTime(commitTs)
-		log.Printf("进行冲突检测")
 		hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, commitTs)
 		if err != nil {
 			return err
