@@ -21,6 +21,7 @@ func Test_NodeTxn(t *testing.T) {
 
 	// 模拟客户端请求（随机选择一个节点作为入口）
 	httpAddr := config1.HttpServerAddr
+	log.Println("send to : " + httpAddr)
 	id := config1.ID
 	t.Logf("Testing node %d at %s", id, httpAddr)
 	// --- 辅助函数：发送请求并自动处理 Leader 重定向 ---
@@ -103,6 +104,8 @@ func Test_NodeTxn(t *testing.T) {
 
 	// --- 测试 1: 发送 PUT 请求 ---
 	t.Run("TestTxnPut", func(t *testing.T) {
+		log.Println("send to : " + httpAddr)
+
 		kv := map[string]string{"test_key": "test_value"}
 		jsonData, _ := json.Marshal(kv)
 		if len(jsonData) == 0 {

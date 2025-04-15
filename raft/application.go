@@ -24,6 +24,8 @@ type application struct {
 	applyc chan []*applyEntry
 	// 日志持久化的通道
 	commitc chan []*pb.Entry
+	// 返回	Get的结果 用于事务处理部分
+	resultc chan []byte
 }
 
 func newApplication(option ComDB.Options, raftNodeId uint64) (*application, error) {
@@ -129,6 +131,15 @@ func (app *application) apply(command string, key string, value string) (string,
 			log.Fatalln("memory delete fault!")
 			return "", nil
 		}
+	case "Get":
+		ms := &search.MemoryStructure{
+			Db: app.DB,
+		}
+		content, err := ms.Db.Get([]byte(key))
+		if err != nil {
+			return "", err
+		}
+		app.resultc <- content
 	}
 	return "", nil
 }

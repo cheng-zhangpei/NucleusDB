@@ -32,7 +32,6 @@ func (it *Iterator) Rewind() {
 func (it *Iterator) Seek(key []byte) {
 	it.indexIter.Seek(key)
 	it.skipToNext()
-
 }
 
 // Next 跳转到下一个key.需要更具prefix来进行过滤

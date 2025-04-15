@@ -5,6 +5,7 @@ go 1.22.0
 toolchain go1.22.10
 
 require (
+	github.com/beevik/ntp v1.4.3
 	github.com/emirpasic/gods v1.18.1
 	github.com/go-zookeeper/zk v1.0.4
 	github.com/gofrs/flock v0.12.1

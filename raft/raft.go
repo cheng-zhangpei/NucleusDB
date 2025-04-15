@@ -147,6 +147,9 @@ type raft struct {
 	txnBuffer   []*pb.TxnOperation
 	// 协调者客户端
 	coordinatorClient *txn.CoordinatorClient
+	// todo 这个有可能和其他事务串了，这个设计不大好，一个异步的事务内容缓冲区后续设计最好是要结合事务号落盘比较好
+
+	txnContent [][]byte
 }
 
 func newRaft(config *RaftConfig, options ComDB.Options) *raft {
@@ -172,6 +175,7 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 	txnBuffer := make([]*pb.TxnOperation, 0)
 	coorClient := txn.NewCoordinatorClient(config.CoordinatorServerAddr)
 	txnSnapshot := txn.NewTxnSnapshot()
+	txnContent := make([][]byte, 0)
 	if err != nil {
 		panic(err)
 	}
@@ -198,6 +202,7 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 		txnBuffer:          txnBuffer,
 		txnSnapshot:        txnSnapshot,
 		coordinatorClient:  coorClient,
+		txnContent:         txnContent,
 	}
 	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
 	// 需要对processTracker进行初始化
@@ -488,6 +493,7 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		msg := r.TxnSnapshotToMsg()
 		r.sendTxnRequest(msg)
 	case pb.MessageType_MsgCommitTxnResp:
+		pr.RecentActive = true
 		// 对其他节点事务的回复进行处理
 		err := r.handleTxnCommitResp(msg)
 		if err != nil {
@@ -739,7 +745,6 @@ func (r *raft) send(msg *pb.Message) {
 func (r *raft) poll(id uint64, voteGranted bool) bool {
 	// 记录投票
 	r.processTracker.Votes[id] = voteGranted
-
 	// 更新投票状态
 	granted, rejected := 0, 0
 	for _, voted := range r.processTracker.Votes {
@@ -749,7 +754,6 @@ func (r *raft) poll(id uint64, voteGranted bool) bool {
 			rejected++
 		}
 	}
-
 	// 判断是否赢得多数票
 	if granted > len(r.processTracker.Votes)/2 {
 		log.Printf("%x won the election with %d votes\n", r.id, granted)
@@ -1125,24 +1129,32 @@ func (r *raft) handleTxnRequest(msg *pb.Message) {
 	// message需要将当前全局逻辑段也发送给follower
 	GlobalLogicTime := r.txnSnapshot.StartWatermark
 	CommitTs, _ := txn.GenerateHybridTs(GlobalLogicTime)
-	log.Printf("leader node %d generate hybird timestamp %d", r.id, CommitTs)
+	log.Printf("node %d generate hybird timestamp %d", r.id, CommitTs)
 
 	// 此时的提交时间是混合时钟
 	r.txnSnapshot.CommitTime = CommitTs
 	// 这里并不需要担心时钟偏移因为冲突的计算只会根据
-	hasConflict, _ := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, r.txnSnapshot.CommitTime)
+	hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, r.txnSnapshot.CommitTime)
+	if err != nil {
+		log.Fatalf("node %d handle conflict check error: %v", r.id, err)
+		return
+	}
+
 	if hasConflict {
+		// todo 冲突处理
+		log.Printf("conflict ! txn submit in follower %d\n", r.id)
 		r.followerHandleConflict()
 		return
 	}
 	// 将操作应用到状态机
-	r.TxnCommit()
+	r.FollowerTxnCommit()
 	// 构造回复信息
 	msg = &pb.Message{
 		Type: pb.MessageType_MsgCommitTxnResp,
 		From: r.id,
 		To:   r.lead,
 	}
+	log.Printf("follower %d send txn response message\n", r.id)
 	r.send(msg)
 }
 
@@ -1193,8 +1205,55 @@ func (r *raft) leaderHandleConflict() {
 //	return nil
 //}
 
+// todo leader需要如何将数据返回，是后续需要改进的点
 // TxnCommit 这个函数的Commit的本质其实也只是将操作变为对应的日志的内容，也就是AppendEntry，由协程自动的将数据应用到状态机中
-func (r *raft) TxnCommit() {
+func (r *raft) LeaderTxnCommit() [][]byte {
+	//ReadingResults := make([][]byte, 0)
+	if r.state == StateLeader {
+		log.Printf("leader %d start committing ...\n", r.id)
+	}
+	//readLen := len(r.txnSnapshot.PendingReads)
+	operations := r.txnBuffer
+	// 根据operations中的内容按照之前规定的Entry的格式进行添加
+	entrys := make([]*pb.Entry, 0)
+	for _, operation := range operations {
+		cmd := operation.OpType
+		key := string(operation.Key)
+		value := string(operation.Value)
+		detailCmd := ""
+		switch cmd {
+		case pb.OperationType_OP_PUT:
+			detailCmd = fmt.Sprintf("PUT %s %s", key, value)
+		case pb.OperationType_OP_DELETE:
+			detailCmd = fmt.Sprintf("DELETE %s", key)
+		case pb.OperationType_OP_READ:
+			detailCmd = fmt.Sprintf("GET %s %s", key, value)
+		}
+		tempEntry := &pb.Entry{
+			Term:  r.Term,
+			Index: r.raftLog.lastIndex(),
+			Data:  []byte(detailCmd),
+		}
+		entrys = append(entrys, tempEntry)
+	}
+	// 应用日志
+	r.appendEntry(entrys)
+	r.app.commitc <- entrys
+	// 应用到状态机上
+	r.app.applyc <- getCommand(entrys)
+	if r.state == StateLeader {
+		log.Printf("leader %d finished committed\n", r.id)
+	}
+	// todo 有可能这个地方卡住了，现在就是这个功能的问题了，进程没法往下走了
+	//if readLen != 0 {
+	//	content := <-r.app.resultc
+	//	ReadingResults = append(ReadingResults, content)
+	//	return ReadingResults
+	//}
+	log.Printf("node %d,state %d commit the txn!\n", r.id, r.state)
+	return nil
+}
+func (r *raft) FollowerTxnCommit() [][]byte {
 	if r.state == StateLeader {
 		log.Printf("leader %d start committing ...\n", r.id)
 	}
@@ -1229,8 +1288,9 @@ func (r *raft) TxnCommit() {
 	if r.state == StateLeader {
 		log.Printf("leader %d finished committed\n", r.id)
 	}
+	log.Printf("node %d,state %d commit the txn!\n", r.id, r.state)
+	return nil
 }
-
 func (r *raft) TxnGetTimestamp() (uint64, error) {
 	hyTs, err := txn.GenerateHybridTs(r.logicalTs)
 	if err != nil {
@@ -1243,15 +1303,16 @@ func (r *raft) TxnGetTimestamp() (uint64, error) {
 // 需要在进行合法性仲裁的同时进行Commit
 func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 	// 记录当前投票的follower
+	log.Printf("leader %d get txn commit resp from %d", r.id, msg.From)
 	r.processTracker.TxnCommitted[msg.From] = true
 	poll := r.TxnPoll()
 	// 对投票情况进行仲裁
 	if poll {
-
 		// 将自身的事务快照提交并将其保存在zk中(注，快照需要保存在全局配置中心中)
 		err := r.coordinatorClient.SaveSnapshot(r.txnSnapshot)
+		log.Printf("leader %d save the txn snapshot to coordinator\n", r.id)
 		if err != nil {
-			log.Println(err)
+			log.Fatalln(err)
 			return err
 		}
 
@@ -1262,7 +1323,7 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 
 		// 此处的CommitTs是follower的提交时间，
 		commitTs, err := txn.GenerateHybridTs(r.logicalTs)
-		log.Printf("node %d generate hybird timestamp %d", r.id, commitTs)
+		log.Printf("[leader] node %d generate hybird timestamp %d", r.id, commitTs)
 		if err != nil {
 			return err
 		}
@@ -1273,9 +1334,14 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 			return err
 		}
 		if !hasConflict {
-			r.TxnCommit()
+			log.Printf("no conflict ! txn submit in leader %d\n", r.id)
+			content := r.LeaderTxnCommit()
+			// 把这个内容放到当前leader的缓冲区中
+			// 指针直接指向这个内容
+			r.txnContent = content
 		} else {
 			// 进入事务冲突处理部分
+			log.Printf("conflict ! txn submit in leader %d\n", r.id)
 			r.leaderHandleConflict()
 		}
 	}

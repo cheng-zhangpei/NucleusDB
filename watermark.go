@@ -61,7 +61,6 @@ func (w *Watermark) addCommitTime(commitTime uint64) {
 		}
 	}
 }
-
 func (w *Watermark) getLatestCommitTime() uint64 {
 	if w.timesHeap.Empty() {
 		return 0 // 如果堆为空，返回 0

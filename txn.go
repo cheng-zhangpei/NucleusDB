@@ -15,24 +15,19 @@ type operation struct {
 type Txn struct {
 	// 当前最新写入操作 (key hash => operation)
 	pendingWrite map[uint64]*operation
-
 	// 同一key的多次写入历史 (仅保留前一次写入)
 	pendingRepeatWrites map[uint64]*operation
-
 	// 读操作记录 (key hash => operation)
 	pendingReads map[uint64]*operation
-
 	// 事务时间戳
 	startWatermark uint64
 	commitTime     uint64
-
 	// 冲突检测用的key指纹
 	conflictKeys map[uint64]struct{}
 	// 统一顺序存储
 	operations []*operation
 	// 数据库实例
 	db *DB
-
 	// Get数据暂存区
 	getResult []string
 }
@@ -136,7 +131,6 @@ func (txn *Txn) Commit(wm *Watermark, tk *tracker) ([]string, error) {
 		return nil, nil
 	}
 	return txn.getResult, nil
-
 }
 
 // 需要加锁保证Commit部分绝对不能被抢占

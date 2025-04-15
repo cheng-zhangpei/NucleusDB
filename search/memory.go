@@ -414,12 +414,10 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	realKey := getSearchKey(timeStamp, agentId)
 	// 构建 SearchRecord
 	matches := ms.Mm.match.GenerateMatches(string(value), ms.Mm.jieba)
-
 	comPressNumThreshold := ComDB.DefaultCompressOptions.ComPressNumThreshold
 	searchRecord := NewSearchRecord(comPressNumThreshold)
 	searchRecord.dataField = value
 	searchRecord.matchField = matches
-
 	// 保存match信息=>也就是简单更新一些文档的参数
 	ms.Mm.match.Store(string(value), ms.Mm.jieba)
 	// 编码 SearchRecord
@@ -476,19 +474,14 @@ func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string,
 		if err != nil {
 			return "", err
 		}
-		// 先初始化一个jieba，别放到Store里头？
 		similaritiesSave := record.similarities
 		searchItemMatches := ms.Mm.match.GenerateMatches(searchItem, ms.Mm.jieba)
 		similarity := ms.Mm.match.Match(record.matchField, searchItemMatches)
-		// 保存这一次匹配的数据record.similarities有固定的初始化大小，既然这样解码出来的record.similarities大小是有限制的
-		// 对于匹配操作的本身并不能说在这个记忆空间中的相似性满了就停止匹配，这个地方需要有一个替换策略，但是这样解码的难度又更大
-		// 获取标识
 		flags := record.simFlags
 		index, full := statusDecode(flags)
 		updateSimilarities, index, isFull := similaritiesUpdate(index, full, ComThreshold,
 			similaritiesSave, similarity)
 		status := statusEncode(index, isFull)
-		// 更新持久化record
 		record.simFlags = status
 		record.similarities = updateSimilarities
 		encodeSearchRecord := record.Encode()
@@ -501,7 +494,6 @@ func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string,
 		if err != nil {
 			return "", err
 		}
-		// 暂存参数用于后续计算
 		values[i] = string(record.dataField)
 		similarities[i] = similarity
 	}

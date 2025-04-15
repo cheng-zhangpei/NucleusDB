@@ -28,7 +28,6 @@ func (bt *BTree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
 	it := &Item{key: key, pos: pos}
 	bt.lock.Lock()
 	oldItem := bt.tree.ReplaceOrInsert(it) // 由于写入不安全这个位置需要加锁
-
 	bt.lock.Unlock()
 	if oldItem == nil {
 		return nil

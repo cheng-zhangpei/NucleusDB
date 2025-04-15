@@ -32,6 +32,12 @@ func Test_base_mvcc(t *testing.T) {
 			if err := txn.Put([]byte("key1"), []byte("value1")); err != nil {
 				return err
 			}
+			if err := txn.Put([]byte("key2"), []byte("value2")); err != nil {
+				return err
+			}
+			if err := txn.Delete([]byte("key1")); err != nil {
+				return err
+			}
 			return txn.Get([]byte("key1"))
 		})
 		if err != nil {

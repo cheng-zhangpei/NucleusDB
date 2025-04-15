@@ -209,7 +209,6 @@ func (n *node) run() {
 					}
 					r.Step(m)
 				}
-
 			case <-txnc:
 				// 只有leader可以接受事务请求
 				log.Printf("node %d get txn commit signal! \n", r.id)
@@ -240,6 +239,13 @@ func (n *node) run() {
 				if m.To == r.id {
 					if m.Type != pb.MessageType_MsgHeartbeatResp && m.Type != pb.MessageType_MsgHeartbeat {
 						log.Printf("Raft Node %d receive message[%+v] from node %d", n.rn.raft.id, m, m.From)
+					}
+					if m.Type == pb.MessageType_MsgCommitTxn {
+						log.Printf("[follower] node %d get MessageType_MsgCommitTxn", n.rn.raft.id)
+
+					}
+					if m.Type == pb.MessageType_MsgCommitTxnResp {
+						log.Printf("[leader]node %d get MessageType_MsgCommitTxnResp", n.rn.raft.id)
 					}
 					r.Step(m)
 				}
@@ -676,7 +682,6 @@ func (n *node) handleTxnPut(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
-		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
 		return
 	}
 
@@ -698,7 +703,6 @@ func (n *node) handleTxnPut(writer http.ResponseWriter, request *http.Request) {
 			log.Printf("Failed to insert key-value pair: %v", err)
 			return
 		}
-		log.Printf("Key-value inserted: key=%s, value=%s", key, value)
 	}
 
 	writer.WriteHeader(http.StatusOK)
@@ -721,7 +725,6 @@ func (n *node) handleTxnDelete(writer http.ResponseWriter, request *http.Request
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
-		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
 		return
 	}
 	// 将当前的leader信息返回
@@ -776,7 +779,6 @@ func (n *node) handleTxnGet(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
-		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
 		return
 	}
 	key := request.URL.Query().Get("key")
@@ -809,7 +811,6 @@ func (n *node) handleTxnCommit(writer http.ResponseWriter, request *http.Request
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
-		log.Printf("Redirecting to leader %d at %s", leaderID, leaderAddr)
 		return
 	}
 	n.txnc <- struct{}{}
@@ -817,7 +818,23 @@ func (n *node) handleTxnCommit(writer http.ResponseWriter, request *http.Request
 
 // TxnGetResult 获得事务的GET结果
 func (n *node) TxnGetResult(writer http.ResponseWriter, request *http.Request) {
-	//todo 获得Get在事务中的结果，这里干脆也用通道来进行吧
+	content := n.rn.raft.txnContent
+	// 转换为 [][]byte -> string -> JSON 字符串发送给客户端
+	var strContent []string
+	for _, bytes := range content {
+		strContent = append(strContent, string(bytes))
+	}
+
+	jsonData, err := json.Marshal(strContent)
+	log.Println("事务数据： " + string(jsonData))
+	if err != nil {
+		http.Error(writer, "Failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	writer.Write(jsonData)
 }
 
 // compiler seem have some problems

@@ -14,6 +14,7 @@ import (
 // 注意一下main方法的工作路径一定是在ComDB下的
 func main() {
 	// 初始化配置
+	printBanner()
 	log.Println("Starting ComDB raft server...............")
 	wd, err := os.Getwd()
 	if err != nil {
@@ -21,7 +22,7 @@ func main() {
 		return
 	}
 	fmt.Printf("Current working directory: %s\n", wd)
-	config, err := raft.LoadConfigWithEnv("../configs/config.yaml") // 需要实现环境变量加载逻辑
+	config, err := raft.LoadConfigWithEnv("raft/configs/raft_config_1.yaml") // 需要实现环境变量加载逻辑
 	if err != nil {
 		panic(err)
 	}
@@ -40,4 +41,27 @@ func main() {
 	case <-termChan:
 		return
 	}
+}
+func printBanner() {
+	banner := "                                                                                      \n" +
+		"                ,----..              ____                             \n" +
+		"  ,----..      /   /   \\           ,'  , `.     ,---,         ,---,. \n" +
+		" /   /   \\    /   .     :       ,-+-,.' _ |   .'  .' `\\     ,'  .'  \\ \n" +
+		"|   :     :  .   /   ;.  \\   ,-+-. ;   , || ,---.'     \\  ,---.' .' | \n" +
+		".   |  ;. / .   ;   /  ` ;  ,--.'|'   |  ;| |   |  .`\\  | |   |  |: | \n" +
+		".   ; /--`  ;   |  ; \\ ; | |   |  ,', |  ': :   : |  '  | :   :  :  / \n" +
+		";   | ;     |   :  | ; | ' |   | /  | |  || |   ' '  ;  : :   |    ;  \n" +
+		"|   : |     .   |  ' ' ' : '   | :  | :  |, '   | ;  .  | |   :     \\ \n" +
+		".   | '___  '   ;  \\; /  | ;   . |  ; |--'  |   | :  |  ' |   |   . | \n" +
+		"'   ; : .'|  \\   \\  ',  /  |   : |  | ,     '   : | /  ;  '   :  '; | \n" +
+		"'   | '/  :   ;   :    /   |   : '  |/      |   | '` ,/   |   |  | ; \n" +
+		"|   :    /     \\   \\ .'    ;   | |`-'       ;   :  .'     |   :   /   \n" +
+		"\\   \\ .'       `---`      |   ;/           |   ,.'       |   | ,'    \n" +
+		" `---`                    '---'            '---'         `----'      \n" +
+		"\n" +
+		"ComDB - A Raft-based Distributed Database\n" +
+		"Author: ZhangPeiCheng\n" +
+		"--------------------------------------------------\n"
+
+	fmt.Print(banner)
 }
