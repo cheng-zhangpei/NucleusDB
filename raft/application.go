@@ -131,7 +131,7 @@ func (app *application) apply(command string, key string, value string) (string,
 			log.Fatalln("memory delete fault!")
 			return "", nil
 		}
-	case "Get":
+	case "GET":
 		ms := &search.MemoryStructure{
 			Db: app.DB,
 		}

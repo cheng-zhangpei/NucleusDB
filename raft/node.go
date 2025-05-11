@@ -4,11 +4,14 @@ import (
 	"ComDB"
 	"ComDB/raft/pb"
 	"ComDB/raft/tracker"
+	"ComDB/raft/txn"
 	"ComDB/search"
 	"context"
 	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
 	"log"
 	"net"
@@ -231,15 +234,7 @@ func (n *node) run() {
 				}
 				r.Step(m)
 			case m := <-n.recvc:
-				// 处理来自其他节点的消息
-				//if pr := r.processTracker.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
-				//	r.Step(m)
-				//}
-				// 判断信息是否是属于这个节点的
 				if m.To == r.id {
-					if m.Type != pb.MessageType_MsgHeartbeatResp && m.Type != pb.MessageType_MsgHeartbeat {
-						log.Printf("Raft Node %d receive message[%+v] from node %d", n.rn.raft.id, m, m.From)
-					}
 					if m.Type == pb.MessageType_MsgCommitTxn {
 						log.Printf("[follower] node %d get MessageType_MsgCommitTxn", n.rn.raft.id)
 
@@ -291,6 +286,10 @@ func sendMessages(sleepTime time.Duration, n *node) {
 				n.rn.raft.msgs = make([]*pb.Message, 0) // 清空原切片
 				mutex.Unlock()
 				if err := sendAllCache(msg, n); err != nil {
+					if status.Code(err) == codes.DeadlineExceeded {
+						// 忽略 DeadlineExceeded 错误
+						continue
+					}
 					log.Printf("Error sending message: %v", err)
 				}
 			} else {
@@ -816,6 +815,32 @@ func (n *node) handleTxnCommit(writer http.ResponseWriter, request *http.Request
 	n.txnc <- struct{}{}
 }
 
+// 设置事务起始时间
+func (n *node) handleSetStartTime(writer http.ResponseWriter, request *http.Request) {
+	if n.rn.raft.state != StateLeader {
+		leaderID := n.rn.raft.lead
+		if leaderID < 1 || int(leaderID) > len(n.httpServerAddrList) {
+			http.Error(writer, "Invalid leader ID", http.StatusInternalServerError)
+			log.Printf("Invalid leader ID: %d", leaderID)
+			return
+		}
+		leaderAddr := n.httpServerAddrList[leaderID-1]
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
+		return
+	}
+
+	ts, err := txn.GenerateHybridTs(n.rn.raft.logicalTs)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+	}
+
+	n.rn.raft.txnSnapshot.StartWatermark = ts
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte("startTs set successfully"))
+}
+
 // TxnGetResult 获得事务的GET结果
 func (n *node) TxnGetResult(writer http.ResponseWriter, request *http.Request) {
 	content := n.rn.raft.txnContent
@@ -826,7 +851,6 @@ func (n *node) TxnGetResult(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	jsonData, err := json.Marshal(strContent)
-	log.Println("事务数据： " + string(jsonData))
 	if err != nil {
 		http.Error(writer, "Failed to marshal response", http.StatusInternalServerError)
 		return
@@ -858,6 +882,7 @@ func startRaftHttpServer(n *node, addr string) {
 	TxnDeleteRouter := fmt.Sprintf("/raft/%d/TxnDelete", n.rn.raft.id)
 	TxnCommitRouter := fmt.Sprintf("/raft/%d/TxnCommit", n.rn.raft.id)
 	TxnGetResultRouter := fmt.Sprintf("/raft/%d/TxnGetResult", n.rn.raft.id)
+	StartTimeRouter := fmt.Sprintf("/raft/%d/startTs", n.rn.raft.id)
 
 	// 注册 HTTP 处理函数
 	http.HandleFunc(putRouter, n.handleRaftPut)
@@ -874,6 +899,7 @@ func startRaftHttpServer(n *node, addr string) {
 	http.HandleFunc(TxnDeleteRouter, n.handleTxnDelete)
 	http.HandleFunc(TxnCommitRouter, n.handleTxnCommit)
 	http.HandleFunc(TxnGetResultRouter, n.TxnGetResult)
+	http.HandleFunc(StartTimeRouter, n.handleSetStartTime)
 
 	// 启动 HTTP 服务器,这里直接阻塞进程就ok了,后台的进程都在成功运行
 	if err := http.ListenAndServe(addr, nil); err != nil {

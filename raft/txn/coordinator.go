@@ -46,8 +46,16 @@ func NewCoordinator(zkAddr string) *Coordinator {
 // handleConflictCheck 处理分布式情况下的冲突检测
 func (co *Coordinator) handleConflictCheck(checkKeyList map[uint64]struct{}, startTime uint64, commitTs uint64) (bool, error) {
 	// 加载所有位于水位线中的的快照
+	if startTime == commitTs {
+		return true, nil
+	}
 	timeRange := co.WaterMark.GetTimeRange(startTime, commitTs)
 	// 连接zk
+	log.Printf("当前水位线时间范围：")
+	for timeC := range timeRange {
+		log.Printf("[%d],", timeC)
+	}
+	log.Printf("\n")
 	if !co.zkConn.connected {
 		err := co.zkConn.Connect()
 		if err != nil {

@@ -491,6 +491,7 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		pr.RecentActive = true
 		// 封装message
 		msg := r.TxnSnapshotToMsg()
+
 		r.sendTxnRequest(msg)
 	case pb.MessageType_MsgCommitTxnResp:
 		pr.RecentActive = true
@@ -1024,15 +1025,38 @@ func (r *raft) sendTxnRequest(msg *pb.Message) {
 	TxnContextId := msg.TxnContextId
 	TxnPackage := msg.TxnPackage
 	Phase := pb.TransactionPhase_PHASE_PREPARE
+	start := msg.StartTxnTime
+	logial := msg.LogicTime
 	// 广播事务数据
-	r.bcastTxnMessage(TxnContextId, TxnPackage, Phase)
+	r.processTracker.Visit(func(id uint64, _ *tracker.Progress) {
+		if id == r.id {
+			return
+		}
+		var msgType pb.MessageType = pb.MessageType_MsgCommitTxn
+		// 构造事务CommitRequest
+		msg := &pb.Message{
+			Type:         msgType,
+			From:         r.id,
+			To:           id,
+			Term:         r.Term,
+			TxnPhase:     Phase,
+			TxnContextId: TxnContextId,
+			TxnPackage:   TxnPackage,
+			LogicTime:    logial,
+			StartTxnTime: start,
+		}
+		r.send(msg)
+	})
+	//r.bcastTxnMessage(TxnContextId, TxnPackage, Phase)
 }
 func (r *raft) TxnSnapshotToMsg() *pb.Message {
 	// 创建基础 Message
+	log.Printf("此时leader的快照开始Ts%d\n", r.txnSnapshot.StartWatermark)
 	msg := &pb.Message{
-		Type: pb.MessageType_MsgCommitTxn, // 假设有对应的消息类型
-		From: r.id,
-		Term: r.Term,
+		Type:         pb.MessageType_MsgCommitTxn, // 假设有对应的消息类型
+		From:         r.id,
+		Term:         r.Term,
+		StartTxnTime: r.txnSnapshot.StartWatermark,
 	}
 
 	// 如果 txnSnapshot 为空，返回空消息
@@ -1066,6 +1090,7 @@ func (r *raft) TxnSnapshotToMsg() *pb.Message {
 	// 设置到 Message 中
 	msg.TxnPackage = txnPackage
 	msg.TxnContextId = 0
+	msg.LogicTime = r.logicalTs
 	return msg
 }
 
@@ -1112,6 +1137,7 @@ func (r *raft) constructTxnSnapshot(msg *pb.Message) {
 	txnSnapshot.StartWatermark = msg.StartTxnTime
 	txnSnapshot.Operations = opList
 	txnSnapshot.ConflictKeys = conflictKeys
+	r.logicalTs = msg.LogicTime
 	// 将日志信息保存在raft结构中
 	r.txnSnapshot = txnSnapshot
 	r.txnBuffer = msg.TxnPackage.Operations
@@ -1120,35 +1146,49 @@ func (r *raft) constructTxnSnapshot(msg *pb.Message) {
 
 // follower对leader所发出的事务请求进行处理
 func (r *raft) handleTxnRequest(msg *pb.Message) {
+	// 开始计时（使用纳秒级别的时间戳
+	startProcessingUnixNano := time.Now().UnixNano() // int64 类型
+	// 获取 Leader 的 StartTs（混合逻辑时间，uint64）
+	leaderStartTs := msg.StartTxnTime
+	// 获取本地当前时间（混合逻辑时间，uint64）
+	localTime, _ := txn.GenerateHybridTs(msg.LogicTime)
+	// 根据 Leader 时间校准，选择较大的时间作为 Follower 的事务起始时间
+	followerStartTs := max(leaderStartTs, localTime)
+	r.txnSnapshot.StartWatermark = followerStartTs
 	// 将数据解包并保存在raft结构暂存区中
 	r.constructTxnSnapshot(msg)
+	// 构造冲突检测列表
 	checkList := make([]uint64, 0)
-	for key, _ := range r.txnSnapshot.PendingReads {
+	for key := range r.txnSnapshot.PendingReads {
 		checkList = append(checkList, key)
 	}
-	// message需要将当前全局逻辑段也发送给follower
-	GlobalLogicTime := r.txnSnapshot.StartWatermark
-	CommitTs, _ := txn.GenerateHybridTs(GlobalLogicTime)
-	log.Printf("node %d generate hybird timestamp %d", r.id, CommitTs)
-
+	// 结束计时并计算耗时（单位：ns）
+	endProcessingUnixNano := time.Now().UnixNano()
+	processingDurationNs := uint64(endProcessingUnixNano - startProcessingUnixNano)
+	// CommitTs = followerStartTs + 处理耗时（ns），确保因果顺序
+	CommitTs := followerStartTs + processingDurationNs
 	// 此时的提交时间是混合时钟
 	r.txnSnapshot.CommitTime = CommitTs
-	// 这里并不需要担心时钟偏移因为冲突的计算只会根据
-	hasConflict, err := r.coordinatorClient.HandleConflictCheck(checkList, r.txnSnapshot.StartWatermark, r.txnSnapshot.CommitTime)
+
+	// 冲突检测
+	hasConflict, err := r.coordinatorClient.HandleConflictCheck(
+		checkList,
+		r.txnSnapshot.StartWatermark,
+		r.txnSnapshot.CommitTime,
+	)
 	if err != nil {
 		log.Fatalf("node %d handle conflict check error: %v", r.id, err)
 		return
 	}
 
 	if hasConflict {
-		// todo 冲突处理
 		log.Printf("conflict ! txn submit in follower %d\n", r.id)
 		r.followerHandleConflict()
 		return
 	}
 	// 将操作应用到状态机
 	r.FollowerTxnCommit()
-	// 构造回复信息
+
 	msg = &pb.Message{
 		Type: pb.MessageType_MsgCommitTxnResp,
 		From: r.id,
@@ -1237,7 +1277,7 @@ func (r *raft) LeaderTxnCommit() [][]byte {
 		entrys = append(entrys, tempEntry)
 	}
 	// 应用日志
-	r.appendEntry(entrys)
+	//r.appendEntry(entrys)
 	r.app.commitc <- entrys
 	// 应用到状态机上
 	r.app.applyc <- getCommand(entrys)
@@ -1281,7 +1321,7 @@ func (r *raft) FollowerTxnCommit() [][]byte {
 		entrys = append(entrys, tempEntry)
 	}
 	// 应用日志
-	r.appendEntry(entrys)
+	//r.appendEntry(entrys)
 	r.app.commitc <- entrys
 	// 应用到状态机上
 	r.app.applyc <- getCommand(entrys)
@@ -1335,10 +1375,10 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 		}
 		if !hasConflict {
 			log.Printf("no conflict ! txn submit in leader %d\n", r.id)
-			content := r.LeaderTxnCommit()
+			r.LeaderTxnCommit()
 			// 把这个内容放到当前leader的缓冲区中
 			// 指针直接指向这个内容
-			r.txnContent = content
+			//r.txnContent = content
 		} else {
 			// 进入事务冲突处理部分
 			log.Printf("conflict ! txn submit in leader %d\n", r.id)

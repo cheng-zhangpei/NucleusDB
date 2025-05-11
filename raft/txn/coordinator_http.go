@@ -66,7 +66,7 @@ func (ch *CoordinatorHTTP) handleConflictCheckHTTP(w http.ResponseWriter, r *htt
 	for _, key := range req.CheckKeys {
 		checkKeyMap[key] = struct{}{}
 	}
-
+	log.Printf("收到冲突检测请求[%d->%d]\n", req.StartTime, req.CommitTime)
 	hasConflict, err := ch.handleConflictCheck(checkKeyMap, req.StartTime, req.CommitTime)
 	resp := conflictCheckResponse{
 		HasConflict: hasConflict,
@@ -86,7 +86,6 @@ func (ch *CoordinatorHTTP) handleSaveSnapshotHTTP(w http.ResponseWriter, r *http
 		return
 	}
 
-	log.Printf("Received Snapshot: %+v", req.Snapshot)
 	if err := ch.saveSnapshot(req.Snapshot); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

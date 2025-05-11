@@ -46,7 +46,7 @@ func (zc *zookeeperConn) Connect() error {
 	if zc.connected {
 		return nil
 	}
-	log.Println(zc.servers)
+	//log.Println(zc.servers)
 	conn, eventChan, err := zk.Connect(zc.servers, zc.timeout,
 		zk.WithLogInfo(false),
 	)
@@ -192,7 +192,7 @@ func (zc *zookeeperConn) Set(path string, data []byte, version int32) (*zk.Stat,
 		lastErr = err
 	}
 	// 指数退避等待 --> 这个和CSMA的思维的冲突逼退思维一样
-	log.Println(lastErr)
+	//log.Println(lastErr)
 	return nil, fmt.Errorf("SafeSet失败，最终错误: %v", lastErr)
 }
 

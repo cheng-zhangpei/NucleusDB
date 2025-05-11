@@ -116,7 +116,7 @@ func (tc *txnClient) GetResult() ([]string, error) {
 	id := tc.raftConfig.ID
 	url := fmt.Sprintf("http://%s/raft/%d/TxnGetResult",
 		httpAddr, id)
-	resp, err := http.Get(url)
+	resp, err := tc.sendRequestWithRedirect(http.MethodPost, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP GET failed: %v", err)
 	}
@@ -138,14 +138,37 @@ func (tc *txnClient) GetResult() ([]string, error) {
 	return result, nil
 }
 
+func (tc *txnClient) setStartTime() error {
+	httpAddr := tc.raftConfig.HttpServerAddr
+	id := tc.raftConfig.ID
+	url := fmt.Sprintf("http://%s/raft/%d/startTs",
+		httpAddr, id)
+	resp, err := tc.sendRequestWithRedirect(http.MethodPost, url, nil)
+	if err != nil {
+		return fmt.Errorf("HTTP GET failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // 封装一下让用户可以直接通过update来操作集群，而不是分散的进行事务操作
 // 返回其中get的内容
 func (tc *txnClient) update(fn func(tc *txnClient) error) ([]string, error) {
+	// todo 我暂时把事务的startTs放到这个位置生成，这种方法其实不太好，但是现在需要先让流程跑起来
+	// todo 暂时是因为客户端和服务端都在本机，否则这是完全不合理的
+	err := tc.setStartTime()
+	if err != nil {
+		return nil, err
+	}
 	if err := fn(tc); err != nil {
 		return nil, err
 	}
 	// 我们在update内部调用commit
-	err := tc.Commit()
+	err = tc.Commit()
 	if err != nil {
 		return nil, err
 	}
