@@ -59,8 +59,9 @@ func printBanner() {
 		"\\   \\ .'       `---`      |   ;/           |   ,.'       |   | ,'    \n" +
 		" `---`                    '---'            '---'         `----'      \n" +
 		"\n" +
-		"ComDB - A Raft-based Distributed Database\n" +
+		"ComDB - A Raft-based Distributed Database focus on LLM memory management\n" +
 		"Author: ZhangPeiCheng\n" +
+		"source code: https://github.com/cheng-zhangpei/ComDB\n" +
 		"--------------------------------------------------\n"
 
 	fmt.Print(banner)

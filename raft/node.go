@@ -175,7 +175,7 @@ func (n *node) run() {
 					if lead == None {
 						log.Printf("raft.node: %x elected leader %x at term %d\n", r.id, r.lead, r.Term)
 					} else {
-						log.Printf("raft.node: %x changed leader from %x to %x at term %d\n", r.id, lead, r.lead, r.Term)
+						//log.Printf("raft.node: %x changed leader from %x to %x at term %d\n", r.id, lead, r.lead, r.Term)
 					}
 					propc = n.propc
 					txnc = n.txnc

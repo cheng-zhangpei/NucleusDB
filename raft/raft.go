@@ -1051,7 +1051,6 @@ func (r *raft) sendTxnRequest(msg *pb.Message) {
 }
 func (r *raft) TxnSnapshotToMsg() *pb.Message {
 	// 创建基础 Message
-	log.Printf("此时leader的快照开始Ts%d\n", r.txnSnapshot.StartWatermark)
 	msg := &pb.Message{
 		Type:         pb.MessageType_MsgCommitTxn, // 假设有对应的消息类型
 		From:         r.id,
@@ -1147,6 +1146,7 @@ func (r *raft) constructTxnSnapshot(msg *pb.Message) {
 // follower对leader所发出的事务请求进行处理
 func (r *raft) handleTxnRequest(msg *pb.Message) {
 	// 开始计时（使用纳秒级别的时间戳
+	txnPackage := msg.TxnPackage
 	startProcessingUnixNano := time.Now().UnixNano() // int64 类型
 	// 获取 Leader 的 StartTs（混合逻辑时间，uint64）
 	leaderStartTs := msg.StartTxnTime
@@ -1190,9 +1190,10 @@ func (r *raft) handleTxnRequest(msg *pb.Message) {
 	r.FollowerTxnCommit()
 
 	msg = &pb.Message{
-		Type: pb.MessageType_MsgCommitTxnResp,
-		From: r.id,
-		To:   r.lead,
+		Type:       pb.MessageType_MsgCommitTxnResp,
+		From:       r.id,
+		To:         r.lead,
+		TxnPackage: txnPackage,
 	}
 	log.Printf("follower %d send txn response message\n", r.id)
 	r.send(msg)
@@ -1254,6 +1255,8 @@ func (r *raft) LeaderTxnCommit() [][]byte {
 	}
 	//readLen := len(r.txnSnapshot.PendingReads)
 	operations := r.txnBuffer
+	log.Println("leader缓冲区中预留数据")
+	log.Println(r.txnBuffer)
 	// 根据operations中的内容按照之前规定的Entry的格式进行添加
 	entrys := make([]*pb.Entry, 0)
 	for _, operation := range operations {
@@ -1276,8 +1279,8 @@ func (r *raft) LeaderTxnCommit() [][]byte {
 		}
 		entrys = append(entrys, tempEntry)
 	}
-	// 应用日志
-	//r.appendEntry(entrys)
+
+	r.appendEntry(entrys)
 	r.app.commitc <- entrys
 	// 应用到状态机上
 	r.app.applyc <- getCommand(entrys)
@@ -1285,12 +1288,6 @@ func (r *raft) LeaderTxnCommit() [][]byte {
 		log.Printf("leader %d finished committed\n", r.id)
 	}
 	// todo 有可能这个地方卡住了，现在就是这个功能的问题了，进程没法往下走了
-	//if readLen != 0 {
-	//	content := <-r.app.resultc
-	//	ReadingResults = append(ReadingResults, content)
-	//	return ReadingResults
-	//}
-	log.Printf("node %d,state %d commit the txn!\n", r.id, r.state)
 	return nil
 }
 func (r *raft) FollowerTxnCommit() [][]byte {
@@ -1346,6 +1343,11 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 	log.Printf("leader %d get txn commit resp from %d", r.id, msg.From)
 	r.processTracker.TxnCommitted[msg.From] = true
 	poll := r.TxnPoll()
+	log.Println("leader msg test")
+	log.Println(msg)
+	if msg.TxnPackage.Operations != nil {
+		r.txnBuffer = msg.TxnPackage.Operations
+	}
 	// 对投票情况进行仲裁
 	if poll {
 		// 将自身的事务快照提交并将其保存在zk中(注，快照需要保存在全局配置中心中)
@@ -1376,6 +1378,7 @@ func (r *raft) handleTxnCommitResp(msg *pb.Message) error {
 		if !hasConflict {
 			log.Printf("no conflict ! txn submit in leader %d\n", r.id)
 			r.LeaderTxnCommit()
+
 			// 把这个内容放到当前leader的缓冲区中
 			// 指针直接指向这个内容
 			//r.txnContent = content
