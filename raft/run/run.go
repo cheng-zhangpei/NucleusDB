@@ -22,7 +22,7 @@ func main() {
 		return
 	}
 	fmt.Printf("Current working directory: %s\n", wd)
-	config, err := raft.LoadConfigWithEnv("raft/configs/raft_config_1.yaml") // 需要实现环境变量加载逻辑
+	config, err := raft.LoadConfigWithEnv("../configs/raft_config_2.yaml") // 需要实现环境变量加载逻辑
 	if err != nil {
 		panic(err)
 	}
@@ -30,9 +30,9 @@ func main() {
 	config.Print()
 	// 数据库配置,emmm,暂时数据库配置先不开放了哈哈哈我想偷懒直接在内部给写完就好了
 	options := ComDB.DefaultOptions
-	err = os.Mkdir("./data", os.ModePerm)
+	err = os.Mkdir("./data2", os.ModePerm)
 	// 启动 Raft 节点
-	options.DirPath = "./data"
+	options.DirPath = "./data2"
 	raft.StartNode(config, options)
 	// 优雅的关闭呵呵呵笑死
 	termChan := make(chan os.Signal, 1)
