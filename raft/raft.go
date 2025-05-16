@@ -2,6 +2,7 @@ package raft
 
 import (
 	"ComDB"
+	"ComDB/raft/ntpservice"
 	"ComDB/raft/pb"
 	"ComDB/raft/tracker"
 	_ "ComDB/raft/tracker"
@@ -150,6 +151,9 @@ type raft struct {
 	// todo 这个有可能和其他事务串了，这个设计不大好，一个异步的事务内容缓冲区后续设计最好是要结合事务号落盘比较好
 
 	txnContent [][]byte
+
+	// NTP client 授时客户端
+	NTPClient *ntpservice.NtpClient
 }
 
 func newRaft(config *RaftConfig, options ComDB.Options) *raft {
@@ -176,13 +180,13 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 	coorClient := txn.NewCoordinatorClient(config.CoordinatorServerAddr)
 	txnSnapshot := txn.NewTxnSnapshot()
 	txnContent := make([][]byte, 0)
+	ntpClient := ntpservice.NewNtpClient("pool.ntp.org")
 	if err != nil {
 		panic(err)
 	}
 
 	r := &raft{
-		id: config.ID,
-
+		id:                 config.ID,
 		lead:               0,
 		raftLog:            raftlog,
 		ms:                 ms,
@@ -203,6 +207,8 @@ func newRaft(config *RaftConfig, options ComDB.Options) *raft {
 		txnSnapshot:        txnSnapshot,
 		coordinatorClient:  coorClient,
 		txnContent:         txnContent,
+		// todo 由于在go里面是没法修改时间的，所以这里需要使用c去进行系统调用的修改
+		NTPClient: ntpClient,
 	}
 	r.processTracker = tracker.MakeProgressTracker(config.InflghtsMaxSize)
 	// 需要对processTracker进行初始化
@@ -1288,6 +1294,7 @@ func (r *raft) LeaderTxnCommit() [][]byte {
 		log.Printf("leader %d finished committed\n", r.id)
 	}
 	// todo 有可能这个地方卡住了，现在就是这个功能的问题了，进程没法往下走了
+	r.txnBuffer = r.txnBuffer[:0]
 	return nil
 }
 func (r *raft) FollowerTxnCommit() [][]byte {
@@ -1326,6 +1333,7 @@ func (r *raft) FollowerTxnCommit() [][]byte {
 		log.Printf("leader %d finished committed\n", r.id)
 	}
 	log.Printf("node %d,state %d commit the txn!\n", r.id, r.state)
+	r.txnBuffer = r.txnBuffer[:0]
 	return nil
 }
 func (r *raft) TxnGetTimestamp() (uint64, error) {

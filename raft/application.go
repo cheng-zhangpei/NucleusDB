@@ -4,6 +4,7 @@ import (
 	"ComDB"
 	"ComDB/raft/pb"
 	"ComDB/search"
+	"errors"
 	"fmt"
 	"log"
 )
@@ -157,7 +158,7 @@ func (app *application) Listener() {
 				}
 			case a := <-app.applyc:
 				err := app.applyAll(a)
-				if err != nil {
+				if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
 					// 处理错误，例如记录日志
 					log.Printf("Error applying entries: %v\n", err)
 					panic(err)

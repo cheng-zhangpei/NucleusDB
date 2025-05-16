@@ -38,7 +38,7 @@ func (tc *txnClient) Put(key, value string) error {
 	if len(jsonData) == 0 {
 		log.Fatal("Empty JSON data")
 	}
-
+	log.Println(httpAddr)
 	url := fmt.Sprintf("http://%s/raft/%d/TxnSet", httpAddr, id)
 	resp, err := tc.sendRequestWithRedirect(http.MethodPost, url, bytes.NewBuffer(jsonData))
 	if err != nil {

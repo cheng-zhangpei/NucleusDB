@@ -16,13 +16,13 @@ func TestTxnClient_Update(t *testing.T) {
 	// 调用 update 提交事务
 	results, err := client.update(func(tc *txnClient) error {
 		// 在这里写你要执行的事务操作
-		if err := tc.Put("key1", "value1"); err != nil {
+		if err := tc.Put("key10000", "value1"); err != nil {
 			return err
 		}
 		if err := tc.Put("key2", "value2"); err != nil {
 			return err
 		}
-		if err := tc.Put("key4", "value2"); err != nil {
+		if err := tc.Put("key50", "value2"); err != nil {
 			return err
 		}
 		if err := tc.Put("key5", "value2"); err != nil {
@@ -52,7 +52,7 @@ func TestTxnClient_Update(t *testing.T) {
 
 func TestRaftGet(t *testing.T) {
 	// 模拟客户端请求
-	key := "key4"
+	key := "key10000"
 	config1, err := raft.LoadConfig("../configs/raft_config_1.yaml")
 	if err != nil {
 		panic(err)
