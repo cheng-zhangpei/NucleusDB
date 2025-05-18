@@ -1,5 +1,7 @@
 package txn
 
+import "log"
+
 type TxnSnapshot struct {
 	PendingWrite        map[uint64]*Operation `json:"pendingWrite"`
 	PendingRepeatWrites map[uint64]*Operation `json:"pendingRepeatWrites"` // 改为大写
@@ -59,6 +61,7 @@ func (txn *TxnSnapshot) Get(key []byte) error {
 
 // Delete 删除数据
 func (txn *TxnSnapshot) Delete(key []byte) error {
+	log.Println("已经构造delete")
 	hash := generateHashCode(key)
 	op := &Operation{
 		Cmd:   "DELETE",

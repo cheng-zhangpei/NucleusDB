@@ -34,7 +34,7 @@ cd ComDB/main
 
 if you install redis-cli, you can test the function easily
 
-![test](../image/redis-test.png)
+![test](https://github.com/cheng-zhangpei/ComDB/blob/main/image/redis-test.png)
 
 #### Http Server
 

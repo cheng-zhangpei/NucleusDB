@@ -65,7 +65,7 @@ func (app *application) commit(ents []*pb.Entry) error {
 func (app *application) applyAll(appEnts []*applyEntry) error {
 	for _, appEnt := range appEnts {
 		_, err := app.apply(appEnt.Command, appEnt.Key, appEnt.Value)
-		if err != nil {
+		if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
 			return err
 		}
 	}
@@ -73,11 +73,11 @@ func (app *application) applyAll(appEnts []*applyEntry) error {
 }
 func (app *application) apply(command string, key string, value string) (string, error) {
 	opts := ComDB.DefaultCompressOptions
-
 	switch command {
 	case "PUT":
 		// do put -> 直接将数据放到本地的数据库里面就ok了
 		err := app.DB.Put([]byte(key), []byte(value))
+
 		if err != nil {
 			return "", err
 		}
@@ -157,7 +157,9 @@ func (app *application) Listener() {
 					panic(err)
 				}
 			case a := <-app.applyc:
-				err := app.applyAll(a)
+				entries := a
+				// 这里一定有delete
+				err := app.applyAll(entries)
 				if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
 					// 处理错误，例如记录日志
 					log.Printf("Error applying entries: %v\n", err)

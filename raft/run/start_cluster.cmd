@@ -11,7 +11,7 @@ start cmd /k "title ZooKeeper && cd /d %ZK_HOME%\bin && zkServer.cmd"
 
 :: 等待ZooKeeper启动完成
 echo Waiting for ZooKeeper to initialize...
-timeout /t 7 >nul
+timeout /t 10 >nul
 
 :: 启动所有Raft节点
 echo Starting ComDB Raft nodes...

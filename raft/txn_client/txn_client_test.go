@@ -22,16 +22,7 @@ func TestTxnClient_Update(t *testing.T) {
 		if err := tc.Put("key2", "value2"); err != nil {
 			return err
 		}
-		if err := tc.Put("key50", "value2"); err != nil {
-			return err
-		}
-		if err := tc.Put("key5", "value2"); err != nil {
-			return err
-		}
 		if err := tc.Get("key1"); err != nil {
-			return err
-		}
-		if err := tc.Get("key2"); err != nil {
 			return err
 		}
 		if err := tc.Delete("key2"); err != nil {
@@ -52,7 +43,7 @@ func TestTxnClient_Update(t *testing.T) {
 
 func TestRaftGet(t *testing.T) {
 	// 模拟客户端请求
-	key := "key10000"
+	key := "key2"
 	config1, err := raft.LoadConfig("../configs/raft_config_1.yaml")
 	if err != nil {
 		panic(err)

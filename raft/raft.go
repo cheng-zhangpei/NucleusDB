@@ -1313,7 +1313,7 @@ func (r *raft) FollowerTxnCommit() [][]byte {
 		case pb.OperationType_OP_PUT:
 			detailCmd = fmt.Sprintf("PUT %s %s", key, value)
 		case pb.OperationType_OP_DELETE:
-			detailCmd = fmt.Sprintf("DELETE %s", key)
+			detailCmd = fmt.Sprintf("DELETE %s %s", key, value)
 		case pb.OperationType_OP_READ:
 			detailCmd = fmt.Sprintf("GET %s %s", key, value)
 		}
