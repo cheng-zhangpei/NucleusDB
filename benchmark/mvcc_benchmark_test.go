@@ -76,7 +76,6 @@ func Benchmark_MVCCConflict(b *testing.B) {
 						return err
 					}
 				}
-
 				// 阶段3：读取检查（冲突触发点）
 				for i := 0; i < 2; i++ {
 					key := keys[rand.Intn(len(keys))]

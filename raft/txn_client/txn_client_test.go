@@ -43,7 +43,7 @@ func TestTxnClient_Update(t *testing.T) {
 
 func TestRaftGet(t *testing.T) {
 	// 模拟客户端请求
-	key := "key2"
+	key := "key10000"
 	config1, err := raft.LoadConfig("../configs/raft_config_1.yaml")
 	if err != nil {
 		panic(err)
