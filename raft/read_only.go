@@ -1,7 +1,7 @@
 package raft
 
 // 管理只读请求，确保线性化和数据一致性(人话就是保持请求的顺序)  由 Leader 维护
-import "ComDB/raft/pb"
+import "NucleusDB/raft/pb"
 
 type ReadState struct {
 	Index      uint64

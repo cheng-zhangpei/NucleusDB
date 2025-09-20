@@ -1,15 +1,15 @@
 package redis
 
 import (
-	"ComDB"
-	"ComDB/utils"
+	"NucleusDB"
+	"NucleusDB/utils"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
 )
 
 func TestRedisDataStructure_Get(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-get")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)
@@ -28,7 +28,7 @@ func TestRedisDataStructure_Get(t *testing.T) {
 	t.Log(string(val2))
 }
 func TestRedisDataStructure_Del_Type(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-del-type")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)
@@ -50,11 +50,11 @@ func TestRedisDataStructure_Del_Type(t *testing.T) {
 	assert.Nil(t, err)
 
 	_, err = rds.Get(utils.GetTestKey(1))
-	assert.Equal(t, ComDB.ErrKeyNotFound, err)
+	assert.Equal(t, NucleusDB.ErrKeyNotFound, err)
 }
 
 func TestRedisDataStructure_HGet(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-hget")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)
@@ -83,11 +83,11 @@ func TestRedisDataStructure_HGet(t *testing.T) {
 	assert.Equal(t, v2, val2)
 
 	_, err = rds.HGet(utils.GetTestKey(1), []byte("field-not-exist"))
-	assert.Equal(t, ComDB.ErrKeyNotFound, err)
+	assert.Equal(t, NucleusDB.ErrKeyNotFound, err)
 }
 
 func TestRedisDataStructure_HDel(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-hdel")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)
@@ -117,7 +117,7 @@ func TestRedisDataStructure_HDel(t *testing.T) {
 }
 
 func TestRedisDataStructure_LPop(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-lpop")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)
@@ -152,7 +152,7 @@ func TestRedisDataStructure_LPop(t *testing.T) {
 }
 
 func TestRedisDataStructure_RPop(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-rpop")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)
@@ -180,7 +180,7 @@ func TestRedisDataStructure_RPop(t *testing.T) {
 }
 
 func TestRedisDataStructure_SIsMember(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-sismember")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)
@@ -211,7 +211,7 @@ func TestRedisDataStructure_SIsMember(t *testing.T) {
 }
 
 func TestRedisDataStructure_SRem(t *testing.T) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	dir, _ := os.MkdirTemp("", "bitcask-go-redis-srem")
 	opts.DirPath = dir
 	rds, err := NewRedisDataStructure(opts)

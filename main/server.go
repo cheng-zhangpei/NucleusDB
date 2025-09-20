@@ -1,8 +1,8 @@
 package main
 
 import (
-	bitcask "ComDB"
-	bitcask_redis "ComDB/main/redis"
+	bitcask "NucleusDB"
+	bitcask_redis "NucleusDB/main/redis"
 	"github.com/tidwall/redcon"
 	"log"
 	"sync"

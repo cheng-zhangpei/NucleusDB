@@ -1,4 +1,4 @@
-package ComDB
+package NucleusDB
 
 const finishedTxn = "mvcc-finished"
 const MVCC_SNAPSHOT_PREFIX = "mvcc-snapshot"

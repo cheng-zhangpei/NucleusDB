@@ -1,4 +1,4 @@
-the implementation of raft in ComDB
+the implementation of raft in NucleusDB
 1. 领导者选举：
     -> 实现 raft/ 中的 becomeCandidate 和 becomeLeader 方法。
     -> 实现选举超时和投票机制。

@@ -1,7 +1,7 @@
 package search
 
 import (
-	"ComDB"
+	"NucleusDB"
 	"fmt"
 	"testing"
 	"time"
@@ -12,7 +12,7 @@ import (
 // 测试 MMSet 和 MMGet 方法
 func TestMemoryStructure(t *testing.T) {
 	// 初始化数据库选项
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	opts.DirPath = "/tmp/bitcask_memory_test" // 测试用的临时目录
 
 	// 创建 MemoryStructure
@@ -56,8 +56,8 @@ func TestMemoryStructure(t *testing.T) {
 // 测试 MemoryStructure 的功能
 func TestMemoryStructureWithChinese(t *testing.T) {
 	// 初始化 MemoryStructure
-	opts := ComDB.DefaultOptions
-	optsCompress := ComDB.DefaultCompressOptions
+	opts := NucleusDB.DefaultOptions
+	optsCompress := NucleusDB.DefaultCompressOptions
 	opts.DirPath = "/tmp/bitcask_memory_test"
 	agentId := "agent1"
 	totalSize := int64(10)

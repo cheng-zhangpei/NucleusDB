@@ -1,3 +1,3 @@
 package sharding
 
-// sharding functionality of the comdb
+// sharding functionality of the NucleusDB

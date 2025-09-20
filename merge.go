@@ -1,9 +1,9 @@
-package ComDB
+package NucleusDB
 
 import (
-	"ComDB/data"
-	"ComDB/fio"
-	"ComDB/utils"
+	"NucleusDB/data"
+	"NucleusDB/fio"
+	"NucleusDB/utils"
 	"io"
 	"os"
 	"path"

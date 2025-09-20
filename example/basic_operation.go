@@ -1,14 +1,14 @@
 package example
 
 import (
-	"ComDB"
+	"NucleusDB"
 	"fmt"
 )
 
 func main() {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	opts.DirPath = "/tmp/bitcask-go"
-	db, err := ComDB.Open(opts)
+	db, err := NucleusDB.Open(opts)
 	if err != nil {
 		panic(err)
 	}

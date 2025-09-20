@@ -1,7 +1,7 @@
-package ComDB
+package NucleusDB
 
 import (
-	"ComDB/utils"
+	"NucleusDB/utils"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"sync"

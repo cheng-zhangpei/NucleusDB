@@ -1,7 +1,7 @@
 package txn_client
 
 import (
-	"ComDB/raft"
+	"NucleusDB/raft"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"log"

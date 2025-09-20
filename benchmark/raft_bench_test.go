@@ -1,7 +1,7 @@
 package benchmark
 
 import (
-	"ComDB/raft"
+	"NucleusDB/raft"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"ComDB/utils"
+	"NucleusDB/utils"
 	"github.com/stretchr/testify/assert"
 )
 

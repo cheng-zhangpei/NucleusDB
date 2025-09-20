@@ -1,8 +1,8 @@
-# ComDB: A Distributed Key-Value Database Engine for Large Model Memory Storage
+# NucleusDB: A Distributed Key-Value Database Engine for Large Model Memory Storage
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-ComDB is a distributed key-value database engine designed specifically to address the memory storage and management challenges of Large Language Models (LLMs) in multi-agent collaborative systems. Built from the ground up, it combines the high-performance Bitcask data model with the robust Raft consensus algorithm to provide a reliable, efficient, and scalable solution.
+NucleusDB is a distributed key-value database engine designed specifically to address the memory storage and management challenges of Large Language Models (LLMs) in multi-agent collaborative systems. Built from the ground up, it combines the high-performance Bitcask data model with the robust Raft consensus algorithm to provide a reliable, efficient, and scalable solution.
 
 This project originated as an undergraduate thesis and represents a complete end-to-end implementation, progressing from a single-node database to a fully-fledged distributed system with advanced features like distributed transactions.
 
@@ -20,7 +20,7 @@ This project originated as an undergraduate thesis and represents a complete end
 
 ## 📚 Research Context
 
-ComDB was developed to solve the critical bottleneck of managing vast amounts of long-term memory data for AI agents. Instead of treating the database as a simple external store, this project integrates memory management logic directly into the database layer, providing a seamless interface for LLM applications.
+NucleusDB was developed to solve the critical bottleneck of managing vast amounts of long-term memory data for AI agents. Instead of treating the database as a simple external store, this project integrates memory management logic directly into the database layer, providing a seamless interface for LLM applications.
 
 The work serves as the foundational memory backend for a larger vision: **KubeNucleus**, a proposed intelligent data center management system where AI oversees cloud-native infrastructure.
 
@@ -35,7 +35,7 @@ The work serves as the foundational memory backend for a larger vision: **KubeNu
 
 ### Installation
 
-[installation documentation](https://github.com/cheng-zhangpei/ComDB/tree/main/doc/installation.md)
+[installation documentation](https://github.com/cheng-zhangpei/NucleusDB/tree/main/doc/installation.md)
 
 ## 📊 Performance
 

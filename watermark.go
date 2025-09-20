@@ -1,4 +1,4 @@
-package ComDB
+package NucleusDB
 
 import (
 	"github.com/emirpasic/gods/queues/priorityqueue"

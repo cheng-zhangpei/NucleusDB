@@ -1,7 +1,7 @@
 package index
 
 import (
-	"ComDB/data"
+	"NucleusDB/data"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

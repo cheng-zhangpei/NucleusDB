@@ -1,7 +1,7 @@
 package raft
 
 import (
-	"ComDB/raft/pb"
+	"NucleusDB/raft/pb"
 	"fmt"
 	"log"
 )

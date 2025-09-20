@@ -1,8 +1,8 @@
 package search
 
 import (
-	"ComDB"
-	"ComDB/search/match_method"
+	"NucleusDB"
+	"NucleusDB/search/match_method"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -277,7 +277,7 @@ func (mm *memoryMeta) RemoveTimestamp(timestamp int64) error {
 
 	// 如果未找到目标时间戳，返回错误
 	if index == -1 {
-		return ComDB.ErrTimestampNotExist
+		return NucleusDB.ErrTimestampNotExist
 	}
 
 	// 从堆中删除目标时间戳
@@ -303,13 +303,13 @@ func (mm *memoryMeta) RemoveTimestamp(timestamp int64) error {
 
 // MemoryStructure ================================= memory search===============================
 type MemoryStructure struct {
-	Db *ComDB.DB
+	Db *NucleusDB.DB
 	Mm *memoryMeta
 }
 
 // NewMemoryStructure 给智能体创建记忆空间
-func NewMemoryStructure(opts ComDB.Options, agentId string, totalSize int64) (*MemoryStructure, error) {
-	db, err := ComDB.Open(opts)
+func NewMemoryStructure(opts NucleusDB.Options, agentId string, totalSize int64) (*MemoryStructure, error) {
+	db, err := NucleusDB.Open(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -326,11 +326,11 @@ func (ms *MemoryStructure) MMGet(agentId string) (string, error) {
 	var meta *memoryMeta = nil
 
 	meta, err := ms.FindMetaData([]byte(agentId))
-	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if err != nil && !errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		return "", err
 	}
 	// 如果meta不存在的话
-	if errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		// 此处给一个记忆空间的默认值，后续要提供修改记忆空间大小的值
 		meta = NewMemoryMeta(agentId, 10)
 	}
@@ -357,11 +357,11 @@ func (ms *MemoryStructure) MMDel(agentId string) (bool, error) {
 	var meta *memoryMeta = nil
 
 	meta, err := ms.FindMetaData([]byte(agentId))
-	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if err != nil && !errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		return false, err
 	}
 	// 如果meta不存在的话
-	if errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		// 此处给一个记忆空间的默认值，后续要提供修改记忆空间大小的值
 		meta = NewMemoryMeta(agentId, 10)
 	}
@@ -371,7 +371,7 @@ func (ms *MemoryStructure) MMDel(agentId string) (bool, error) {
 	defer ms.Mm.mu.Unlock()
 	// 遍历所有的searchKey进行删除
 	timeStamps := ms.Mm.GetAllMemory()
-	optsBat := ComDB.DefaultWriteBatchOptions
+	optsBat := NucleusDB.DefaultWriteBatchOptions
 	wb := ms.Db.NewWriteBatch(optsBat)
 	for _, timeStamp := range timeStamps {
 		realKey := getSearchKey(timeStamp, agentId)
@@ -397,11 +397,11 @@ func (ms *MemoryStructure) MMDel(agentId string) (bool, error) {
 func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	// 查找 meta 数据
 	meta, err := ms.FindMetaData([]byte(agentId))
-	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if err != nil && !errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		return err // 返回错误
 	}
 	// 如果 meta 不存在，创建一个默认的 meta
-	if errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		meta = NewMemoryMeta(agentId, 10) // 默认记忆空间大小为 10
 	}
 	// 这里需要更新信息
@@ -414,7 +414,7 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	realKey := getSearchKey(timeStamp, agentId)
 	// 构建 SearchRecord
 	matches := ms.Mm.match.GenerateMatches(string(value), ms.Mm.jieba)
-	comPressNumThreshold := ComDB.DefaultCompressOptions.ComPressNumThreshold
+	comPressNumThreshold := NucleusDB.DefaultCompressOptions.ComPressNumThreshold
 	searchRecord := NewSearchRecord(comPressNumThreshold)
 	searchRecord.dataField = value
 	searchRecord.matchField = matches
@@ -423,7 +423,7 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 	// 编码 SearchRecord
 	encodedRecord := searchRecord.Encode()
 	// 创建事件
-	var opts = ComDB.DefaultWriteBatchOptions
+	var opts = NucleusDB.DefaultWriteBatchOptions
 	wb := ms.Db.NewWriteBatch(opts)
 
 	// 将编码后的数据存储到数据库
@@ -441,18 +441,18 @@ func (ms *MemoryStructure) MMSet(value []byte, agentId string) error {
 
 // MatchSearch 得到匹配程度高的，只有在match的时候才会触发相似度的更新
 func (ms *MemoryStructure) MatchSearch(searchItem string, agentId string,
-	opts ComDB.CompressOptions) (string, error) {
+	opts NucleusDB.CompressOptions) (string, error) {
 	var meta *memoryMeta = nil
 	ComThreshold := opts.CompressNum // 压缩系数数组长度
 	meta, err := ms.FindMetaData([]byte(agentId))
 	if meta == nil {
 		panic("inside match meta is nil")
 	}
-	if err != nil && !errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if err != nil && !errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		return "", err
 	}
 	// 如果meta不存在的话
-	if errors.Is(err, ComDB.ErrMemoryMetaNotFound) {
+	if errors.Is(err, NucleusDB.ErrMemoryMetaNotFound) {
 		// 此处给一个记忆空间的默认值，后续要提供修改记忆空间大小的值
 		meta = NewMemoryMeta(agentId, 10)
 	}
@@ -558,12 +558,12 @@ func (ms *MemoryStructure) GetSimilarities() (map[string][]float64, error) {
 // FindMetaData 根据用户的输入找到元数据
 func (ms *MemoryStructure) FindMetaData(key []byte) (*memoryMeta, error) {
 	metaData, err := ms.Db.Get(key)
-	if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
+	if err != nil && !errors.Is(err, NucleusDB.ErrKeyNotFound) {
 		return nil, err
 	}
 	var meta *memoryMeta
 	var exists = true
-	if errors.Is(err, ComDB.ErrKeyNotFound) {
+	if errors.Is(err, NucleusDB.ErrKeyNotFound) {
 		exists = false
 	} else {
 		meta, err = decodeMemoryMeta(metaData)
@@ -573,7 +573,7 @@ func (ms *MemoryStructure) FindMetaData(key []byte) (*memoryMeta, error) {
 	}
 	if !exists {
 		// 到外层创建MemoryMeta
-		return nil, ComDB.ErrMemoryMetaNotFound
+		return nil, NucleusDB.ErrMemoryMetaNotFound
 	}
 	//  拿到持久化的数据之后还需要初始化没有持久化的数据
 	return meta, nil

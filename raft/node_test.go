@@ -1,7 +1,7 @@
 package raft
 
 import (
-	"ComDB"
+	"NucleusDB"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -32,9 +32,9 @@ func TestRaftNodeStart(t *testing.T) {
 		panic(err)
 	}
 	// 拿到数据库配置-注意一下哈，在每次启动的时候创建的数据目录全部都不一样，别到时候自己发现持久化有问题哈
-	options1 := ComDB.DefaultOptions
-	options2 := ComDB.DefaultOptions
-	options3 := ComDB.DefaultOptions
+	options1 := NucleusDB.DefaultOptions
+	options2 := NucleusDB.DefaultOptions
+	options3 := NucleusDB.DefaultOptions
 	dir1, _ := os.MkdirTemp("", "raft1")
 	dir2, _ := os.MkdirTemp("", "raft2")
 	dir3, _ := os.MkdirTemp("", "raft3")

@@ -1,8 +1,8 @@
 package redis
 
 import (
-	"ComDB"
-	"ComDB/utils"
+	"NucleusDB"
+	"NucleusDB/utils"
 	"encoding/binary"
 	"errors"
 	"time"
@@ -25,11 +25,11 @@ const (
 
 // redis 结构体
 type RedisDataStructure struct {
-	db *ComDB.DB
+	db *NucleusDB.DB
 }
 
-func NewRedisDataStructure(options ComDB.Options) (*RedisDataStructure, error) {
-	db, err := ComDB.Open(options)
+func NewRedisDataStructure(options NucleusDB.Options) (*RedisDataStructure, error) {
+	db, err := NucleusDB.Open(options)
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +97,11 @@ func (rds *RedisDataStructure) HSet(key, field, value []byte) (bool, error) {
 	// 先判断数据是否存在
 	encKey := hk.encode()
 	var exist = true
-	if _, err := rds.db.Get(encKey); err == ComDB.ErrKeyNotFound {
+	if _, err := rds.db.Get(encKey); err == NucleusDB.ErrKeyNotFound {
 		exist = false
 	}
 	// 新建一个事务
-	wb := rds.db.NewWriteBatch(ComDB.DefaultWriteBatchOptions)
+	wb := rds.db.NewWriteBatch(NucleusDB.DefaultWriteBatchOptions)
 	// 这个事务需要完成两件事情一个是保存元数据，并根据加密的key存储value值
 	if !exist {
 		meta.size++
@@ -152,12 +152,12 @@ func (rds *RedisDataStructure) HDel(key, field []byte) (bool, error) {
 
 	// 先查看是否存在
 	var exist = true
-	if _, err = rds.db.Get(encKey); err == ComDB.ErrKeyNotFound {
+	if _, err = rds.db.Get(encKey); err == NucleusDB.ErrKeyNotFound {
 		exist = false
 	}
 
 	if exist {
-		wb := rds.db.NewWriteBatch(ComDB.DefaultWriteBatchOptions)
+		wb := rds.db.NewWriteBatch(NucleusDB.DefaultWriteBatchOptions)
 		meta.size--
 		_ = wb.Put(key, meta.encode())
 		_ = wb.Delete(encKey)
@@ -171,12 +171,12 @@ func (rds *RedisDataStructure) HDel(key, field []byte) (bool, error) {
 
 func (rds *RedisDataStructure) findMetadata(key []byte, dataType RedisDataType) (*metadata, error) {
 	metaData, err := rds.db.Get(key)
-	if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
+	if err != nil && !errors.Is(err, NucleusDB.ErrKeyNotFound) {
 		return nil, err
 	}
 	var meta *metadata
 	var exists = true
-	if err == ComDB.ErrKeyNotFound {
+	if err == NucleusDB.ErrKeyNotFound {
 		exists = false
 	} else {
 		meta = decodeMetaData(metaData)
@@ -237,7 +237,7 @@ func (rds *RedisDataStructure) pushInner(key []byte, element []byte, isLeft bool
 	} else {
 		lk.index = meta.tail
 	}
-	wb := rds.db.NewWriteBatch(ComDB.DefaultWriteBatchOptions)
+	wb := rds.db.NewWriteBatch(NucleusDB.DefaultWriteBatchOptions)
 	meta.size++
 	if isLeft {
 		// 前移head
@@ -317,9 +317,9 @@ func (rds *RedisDataStructure) SAdd(key []byte, member []byte) (bool, error) {
 		member:  member,
 	}
 	var ok bool
-	if _, err := rds.db.Get(sk.encode()); errors.Is(err, ComDB.ErrKeyNotFound) {
+	if _, err := rds.db.Get(sk.encode()); errors.Is(err, NucleusDB.ErrKeyNotFound) {
 		// 不存在,也就是说只有member在同一个meta中不同的时候才需要进行更新
-		wb := rds.db.NewWriteBatch(ComDB.DefaultWriteBatchOptions)
+		wb := rds.db.NewWriteBatch(NucleusDB.DefaultWriteBatchOptions)
 		meta.size++
 		_ = wb.Put(key, meta.encode())
 		_ = wb.Put(sk.encode(), member)
@@ -343,10 +343,10 @@ func (rds *RedisDataStructure) SIsMember(key, member []byte) (bool, error) {
 	}
 	// 去查找
 	_, err = rds.db.Get(sk.encode())
-	if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
+	if err != nil && !errors.Is(err, NucleusDB.ErrKeyNotFound) {
 		return false, nil
 	}
-	if errors.Is(err, ComDB.ErrKeyNotFound) {
+	if errors.Is(err, NucleusDB.ErrKeyNotFound) {
 		return false, nil
 	}
 	return true, nil
@@ -368,12 +368,12 @@ func (rds *RedisDataStructure) SRem(key, member []byte) (bool, error) {
 		member:  member,
 	}
 
-	if _, err = rds.db.Get(sk.encode()); errors.Is(err, ComDB.ErrKeyNotFound) {
+	if _, err = rds.db.Get(sk.encode()); errors.Is(err, NucleusDB.ErrKeyNotFound) {
 		return false, nil
 	}
 
 	// 更新
-	wb := rds.db.NewWriteBatch(ComDB.DefaultWriteBatchOptions)
+	wb := rds.db.NewWriteBatch(NucleusDB.DefaultWriteBatchOptions)
 	meta.size--
 	// 设置一个事务也就是先Put保存元数据，保存元数据之后再删除数据部分的内容
 
@@ -406,10 +406,10 @@ func (rds *RedisDataStructure) ZAdd(key []byte, score float64, member []byte) (b
 	var exist = true
 	// 查看是否已经存在
 	value, err := rds.db.Get(zk.encodeWithMember())
-	if err != nil && err != ComDB.ErrKeyNotFound {
+	if err != nil && err != NucleusDB.ErrKeyNotFound {
 		return false, err
 	}
-	if err == ComDB.ErrKeyNotFound {
+	if err == NucleusDB.ErrKeyNotFound {
 		exist = false
 	}
 	if exist {
@@ -419,7 +419,7 @@ func (rds *RedisDataStructure) ZAdd(key []byte, score float64, member []byte) (b
 	}
 
 	// 更新元数据和数据
-	wb := rds.db.NewWriteBatch(ComDB.DefaultWriteBatchOptions)
+	wb := rds.db.NewWriteBatch(NucleusDB.DefaultWriteBatchOptions)
 	if !exist {
 		meta.size++
 		_ = wb.Put(key, meta.encode())

@@ -1,9 +1,9 @@
 package raft
 
 import (
-	"ComDB"
-	"ComDB/raft/pb"
-	"ComDB/search"
+	"NucleusDB"
+	"NucleusDB/raft/pb"
+	"NucleusDB/search"
 	"errors"
 	"fmt"
 	"log"
@@ -20,7 +20,7 @@ type applyEntry struct {
 }
 type application struct {
 	ID uint64
-	DB *ComDB.DB
+	DB *NucleusDB.DB
 	// 将需要应用的内容发送给上层的通道
 	applyc chan []*applyEntry
 	// 日志持久化的通道
@@ -29,8 +29,8 @@ type application struct {
 	resultc chan []byte
 }
 
-func newApplication(option ComDB.Options, raftNodeId uint64) (*application, error) {
-	db, err := ComDB.Open(option)
+func newApplication(option NucleusDB.Options, raftNodeId uint64) (*application, error) {
+	db, err := NucleusDB.Open(option)
 	if err != nil {
 		return nil, err
 	}
@@ -65,14 +65,14 @@ func (app *application) commit(ents []*pb.Entry) error {
 func (app *application) applyAll(appEnts []*applyEntry) error {
 	for _, appEnt := range appEnts {
 		_, err := app.apply(appEnt.Command, appEnt.Key, appEnt.Value)
-		if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
+		if err != nil && !errors.Is(err, NucleusDB.ErrKeyNotFound) {
 			return err
 		}
 	}
 	return nil
 }
 func (app *application) apply(command string, key string, value string) (string, error) {
-	opts := ComDB.DefaultCompressOptions
+	opts := NucleusDB.DefaultCompressOptions
 	switch command {
 	case "PUT":
 		// do put -> 直接将数据放到本地的数据库里面就ok了
@@ -160,7 +160,7 @@ func (app *application) Listener() {
 				entries := a
 				// 这里一定有delete
 				err := app.applyAll(entries)
-				if err != nil && !errors.Is(err, ComDB.ErrKeyNotFound) {
+				if err != nil && !errors.Is(err, NucleusDB.ErrKeyNotFound) {
 					// 处理错误，例如记录日志
 					log.Printf("Error applying entries: %v\n", err)
 					panic(err)
@@ -172,7 +172,7 @@ func (app *application) Listener() {
 
 // getPrefix 用之前写的迭代器来实现前缀查找
 func (app *application) getPrefix(prefix string) uint64 {
-	iterator := app.DB.NewIterator(ComDB.IteratorOptions{
+	iterator := app.DB.NewIterator(NucleusDB.IteratorOptions{
 		Prefix:  []byte(prefix),
 		Reverse: false, // 是否反向遍历
 	})

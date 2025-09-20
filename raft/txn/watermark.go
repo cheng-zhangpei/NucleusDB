@@ -1,6 +1,6 @@
 package txn
 
-// 与ComDB中的水位线机制不同，这里的水位线管理以zk作为存储标准
+// 与NucleusDB中的水位线机制不同，这里的水位线管理以zk作为存储标准
 
 import (
 	"github.com/emirpasic/gods/queues/priorityqueue"

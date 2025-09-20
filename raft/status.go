@@ -1,6 +1,6 @@
 package raft
 
-import "ComDB/raft/tracker"
+import "NucleusDB/raft/tracker"
 
 // HardStatus the message that should be saved in db
 type HardStatus struct {

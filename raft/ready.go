@@ -1,6 +1,6 @@
 package raft
 
-import "ComDB/raft/pb"
+import "NucleusDB/raft/pb"
 
 type Ready struct {
 	Entries          []*pb.Entry   // 需要持久化的新日志条目

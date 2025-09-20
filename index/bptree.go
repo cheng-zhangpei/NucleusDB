@@ -1,7 +1,7 @@
 package index
 
 import (
-	"ComDB/data"
+	"NucleusDB/data"
 	"go.etcd.io/bbolt"
 	"path/filepath"
 )

@@ -1,8 +1,8 @@
 package benchmark
 
 import (
-	ComDB "ComDB"
-	"ComDB/utils"
+	NucleusDB "NucleusDB"
+	"NucleusDB/utils"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/rand"
@@ -20,9 +20,9 @@ func Benchmark_Put(b *testing.B) {
 	defer os.RemoveAll(dir)
 
 	// 初始化数据库
-	options := ComDB.DefaultOptions
+	options := NucleusDB.DefaultOptions
 	options.DirPath = dir
-	db, err := ComDB.Open(options)
+	db, err := NucleusDB.Open(options)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -52,9 +52,9 @@ func Benchmark_Get(b *testing.B) {
 	defer os.RemoveAll(dir)
 
 	// 初始化数据库
-	options := ComDB.DefaultOptions
+	options := NucleusDB.DefaultOptions
 	options.DirPath = dir
-	db, err := ComDB.Open(options)
+	db, err := NucleusDB.Open(options)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func Benchmark_Get(b *testing.B) {
 			// 测试随机读取
 			for i := 0; i < b.N; i++ {
 				_, err := db.Get(utils.GetTestKey(rand.Intn(size)))
-				if err != nil && err != ComDB.ErrKeyNotFound {
+				if err != nil && err != NucleusDB.ErrKeyNotFound {
 					b.Fatal(err)
 				}
 			}
@@ -92,9 +92,9 @@ func Benchmark_Delete(b *testing.B) {
 	}
 	defer os.RemoveAll(dir)
 
-	options := ComDB.DefaultOptions
+	options := NucleusDB.DefaultOptions
 	options.DirPath = dir
-	db, err := ComDB.Open(options)
+	db, err := NucleusDB.Open(options)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -139,9 +139,9 @@ func Benchmark_Mixed(b *testing.B) {
 	defer os.RemoveAll(dir)
 
 	// 初始化数据库
-	options := ComDB.DefaultOptions
+	options := NucleusDB.DefaultOptions
 	options.DirPath = dir
-	db, err := ComDB.Open(options)
+	db, err := NucleusDB.Open(options)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func Benchmark_Mixed(b *testing.B) {
 				} else {
 					// 读操作
 					_, err := db.Get(utils.GetTestKey(rand.Intn(initialSize)))
-					if err != nil && err != ComDB.ErrKeyNotFound {
+					if err != nil && err != NucleusDB.ErrKeyNotFound {
 						b.Fatal(err)
 					}
 				}

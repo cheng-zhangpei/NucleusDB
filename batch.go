@@ -1,7 +1,7 @@
-package ComDB
+package NucleusDB
 
 import (
-	"ComDB/data"
+	"NucleusDB/data"
 	"encoding/binary"
 	"sync"
 	"sync/atomic"

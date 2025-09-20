@@ -1,10 +1,10 @@
-package ComDB
+package NucleusDB
 
 import (
-	"ComDB/data"
-	"ComDB/fio"
-	"ComDB/index"
-	"ComDB/utils"
+	"NucleusDB/data"
+	"NucleusDB/fio"
+	"NucleusDB/index"
+	"NucleusDB/utils"
 	"errors"
 	"fmt"
 	"github.com/gofrs/flock"

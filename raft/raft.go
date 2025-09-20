@@ -1,12 +1,12 @@
 package raft
 
 import (
-	"ComDB"
-	"ComDB/raft/ntpservice"
-	"ComDB/raft/pb"
-	"ComDB/raft/tracker"
-	_ "ComDB/raft/tracker"
-	"ComDB/raft/txn"
+	"NucleusDB"
+	"NucleusDB/raft/ntpservice"
+	"NucleusDB/raft/pb"
+	"NucleusDB/raft/tracker"
+	_ "NucleusDB/raft/tracker"
+	"NucleusDB/raft/txn"
 	_ "bytes"
 	"errors"
 	"fmt"
@@ -156,7 +156,7 @@ type raft struct {
 	NTPClient *ntpservice.NtpClient
 }
 
-func newRaft(config *RaftConfig, options ComDB.Options) *raft {
+func newRaft(config *RaftConfig, options NucleusDB.Options) *raft {
 	if err := config.validate(); err != nil {
 		panic(err)
 	}

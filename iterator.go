@@ -1,7 +1,7 @@
-package ComDB
+package NucleusDB
 
 import (
-	"ComDB/index"
+	"NucleusDB/index"
 	"bytes"
 )
 

@@ -1,8 +1,8 @@
 package raft
 
 import (
-	"ComDB"
-	"ComDB/raft/pb"
+	"NucleusDB"
+	"NucleusDB/raft/pb"
 	"errors"
 )
 
@@ -35,7 +35,7 @@ type Peer struct {
 // recommended that instead of calling Bootstrap, applications bootstrap their
 // state manually by setting up a Storage that has a first index > 1 and which
 // stores the desired ConfState as its InitialState.
-func NewRawNode(config *RaftConfig, options ComDB.Options) (*RawNode, error) {
+func NewRawNode(config *RaftConfig, options NucleusDB.Options) (*RawNode, error) {
 	r := newRaft(config, options)
 	rn := &RawNode{
 		raft: r,

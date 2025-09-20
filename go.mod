@@ -1,8 +1,6 @@
-module ComDB
+module NucleusDB
 
 go 1.22.0
-
-toolchain go1.22.10
 
 require (
 	github.com/beevik/ntp v1.4.3

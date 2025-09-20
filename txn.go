@@ -1,4 +1,4 @@
-package ComDB
+package NucleusDB
 
 import (
 	"encoding/binary"

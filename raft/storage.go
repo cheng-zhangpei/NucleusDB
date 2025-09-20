@@ -1,7 +1,7 @@
 package raft
 
 import (
-	"ComDB/raft/pb"
+	"NucleusDB/raft/pb"
 	"errors"
 	_ "golang.org/x/exp/slog"
 	"log"
@@ -23,7 +23,7 @@ var ErrSnapOutOfDate = errors.New("requested index is older than the existing sn
 var ErrUnavailable = errors.New("requested entry at index is unavailable")
 
 // Storage 用异步批量写入的方式优化写入性能。外部的写入请求先由一个 goroutine 写入内存中的 WAL 缓冲区，然后由另一个 goroutine 定期将缓冲区中的日志条目批量写入磁盘
-// ComDBStorage this part is about storage of the log entry and some related operation,
+// NucleusDBStorage this part is about storage of the log entry and some related operation,
 type Storage interface {
 	// InitialState returns the saved HardState and ConfState information.
 	InitialState() (HardState, error)

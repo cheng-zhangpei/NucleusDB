@@ -1,15 +1,15 @@
 package search
 
 import (
-	"ComDB"
+	"NucleusDB"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
 // todo 在测试的时候总觉得速度太慢，后续还要优化，估计有啥奇怪的地方瓶颈了，但是内存的确是大问题，反复的抽象带来了很多的内存消耗
 func TestCompressor_Compress(t *testing.T) {
-	opts := ComDB.DefaultOptions
-	compressOpts := ComDB.DefaultCompressOptions
+	opts := NucleusDB.DefaultOptions
+	compressOpts := NucleusDB.DefaultCompressOptions
 
 	agentId := "testAgentId1"
 	opts.DirPath = "/tmp/bitcask_memory_test"
@@ -73,8 +73,8 @@ func TestCompressor_Compress(t *testing.T) {
 	}
 
 	// 执行压缩 -> 这里需要看一下压缩器是否可以将匹配区的数据正常的解码
-	compressOptions := ComDB.DefaultCompressOptions
-	modelOptions := ComDB.DefaultCompressModelOptions
+	compressOptions := NucleusDB.DefaultCompressOptions
+	modelOptions := NucleusDB.DefaultCompressModelOptions
 	compressor, err := NewCompressor(compressOptions, agentId, ms)
 	assert.Nil(t, err)
 	assert.NotNil(t, compressor)

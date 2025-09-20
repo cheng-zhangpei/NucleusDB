@@ -1,7 +1,7 @@
 package search
 
 import (
-	"ComDB"
+	"NucleusDB"
 	"errors"
 	"math"
 )
@@ -22,7 +22,7 @@ type Compressor struct {
 }
 
 // NewCompressor 创建压缩结构
-func NewCompressor(opts ComDB.CompressOptions, agentId string, ms *MemoryStructure) (*Compressor, error) {
+func NewCompressor(opts NucleusDB.CompressOptions, agentId string, ms *MemoryStructure) (*Compressor, error) {
 	// 读取元数据
 	if ms.Mm == nil {
 		mm, err := ms.FindMetaData([]byte(agentId))
@@ -66,7 +66,7 @@ func (cs *Compressor) Compress(agentID string, endpoint string) (bool, error) {
 	// 判断是否到达压缩阈值
 	valid, CompressCoefficient := cs.getCurrentSimilarityLen(cs.SimilarityCoefficientList)
 	if !valid {
-		return false, ComDB.ErrCompressNumNotEnough
+		return false, NucleusDB.ErrCompressNumNotEnough
 	}
 	// 用于存储当前批次的数据
 	batch := make([]string, cs.CompressThreshold)
@@ -193,7 +193,7 @@ func (cs *Compressor) storeCompressedData(compressedData string, realKeys []stri
 		if err != nil {
 			return err
 		}
-		if errors.Is(err, ComDB.ErrTimestampNotExist) {
+		if errors.Is(err, NucleusDB.ErrTimestampNotExist) {
 			// 这个地方如果timestamp不存在不一定是有问题。可能是被记忆空间所剔除不影响压缩数据的插入
 			continue
 		}

@@ -1,11 +1,11 @@
 package raft
 
 import (
-	"ComDB"
-	"ComDB/raft/pb"
-	"ComDB/raft/tracker"
-	"ComDB/raft/txn"
-	"ComDB/search"
+	"NucleusDB"
+	"NucleusDB/raft/pb"
+	"NucleusDB/raft/tracker"
+	"NucleusDB/raft/txn"
+	"NucleusDB/search"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -78,7 +78,7 @@ type raftServer struct {
 	node *node
 }
 
-func StartNode(c *RaftConfig, options ComDB.Options) {
+func StartNode(c *RaftConfig, options NucleusDB.Options) {
 	rn, err := NewRawNode(c, options)
 	if err != nil {
 		panic(err)
@@ -102,7 +102,7 @@ func StartNode(c *RaftConfig, options ComDB.Options) {
 	// 此处的设计是为了让多个数据库实例在一个应用中运行
 	go startRaftHttpServer(n, c.HttpServerAddr)
 }
-func StartNodeSeperated(c *RaftConfig, options ComDB.Options) {
+func StartNodeSeperated(c *RaftConfig, options NucleusDB.Options) {
 	rn, err := NewRawNode(c, options)
 	if err != nil {
 		panic(err)
@@ -410,13 +410,13 @@ func (n *node) handleRaftGet(writer http.ResponseWriter, request *http.Request) 
 	log.Printf("Received GET request for key: %s\n", key)
 	// 我都无语了开的数据库实例都不一样
 	value, err := n.rn.raft.app.DB.Get([]byte(key))
-	if err != nil && err != ComDB.ErrKeyNotFound {
+	if err != nil && err != NucleusDB.ErrKeyNotFound {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		log.Printf("Failed to get value for key: key=%s, error=%v\n", key, err)
 		return
 	}
 
-	if err == ComDB.ErrKeyNotFound {
+	if err == NucleusDB.ErrKeyNotFound {
 		log.Printf("Key not found: key=%s\n", key)
 	} else {
 		log.Printf("%d Successfully retrieved value for key: key=%s, value=%s\n", n.rn.raft.id, key, string(value))
@@ -473,7 +473,7 @@ func (n *node) handleMessageSearch(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	results := make([]string, 1)
-	opts := ComDB.DefaultCompressOptions
+	opts := NucleusDB.DefaultCompressOptions
 	for key, value := range kv {
 		ms := &search.MemoryStructure{
 			Db: n.rn.raft.app.DB,

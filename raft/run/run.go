@@ -1,8 +1,8 @@
 package main
 
 import (
-	"ComDB"
-	"ComDB/raft"
+	"NucleusDB"
+	"NucleusDB/raft"
 	"fmt"
 	"log"
 	"os"
@@ -11,11 +11,11 @@ import (
 )
 
 // 在分布式环境下 运行节点
-// 注意一下main方法的工作路径一定是在ComDB下的
+// 注意一下main方法的工作路径一定是在NucleusDB下的
 func main() {
 	// 初始化配置
 	printBanner()
-	log.Println("Starting ComDB raft server...............")
+	log.Println("Starting NucleusDB raft server...............")
 	wd, err := os.Getwd()
 	if err != nil {
 		fmt.Printf("Failed to get current working directory: %v\n", err)
@@ -29,7 +29,7 @@ func main() {
 	// 把config给打印出来
 	config.Print()
 	// 数据库配置,emmm,暂时数据库配置先不开放了哈哈哈我想偷懒直接在内部给写完就好了
-	options := ComDB.DefaultOptions
+	options := NucleusDB.DefaultOptions
 	err = os.Mkdir("./data1", os.ModePerm)
 	// 启动 Raft 节点
 	options.DirPath = "./data1"
@@ -59,9 +59,9 @@ func printBanner() {
 		"\\   \\ .'       `---`      |   ;/           |   ,.'       |   | ,'    \n" +
 		" `---`                    '---'            '---'         `----'      \n" +
 		"\n" +
-		"ComDB - A Raft-based Distributed Database focus on LLM memory management\n" +
+		"NucleusDB - A Raft-based Distributed Database focus on LLM memory management\n" +
 		"Author: ZhangPei Cheng\n" +
-		"source code: https://github.com/cheng-zhangpei/ComDB\n" +
+		"source code: https://github.com/cheng-zhangpei/NucleusDB\n" +
 		"--------------------------------------------------\n"
 
 	fmt.Print(banner)

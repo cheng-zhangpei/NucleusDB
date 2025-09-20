@@ -1,7 +1,7 @@
 package index
 
 import (
-	"ComDB/data"
+	"NucleusDB/data"
 	"bytes"
 	goart "github.com/plar/go-adaptive-radix-tree"
 	"sort"

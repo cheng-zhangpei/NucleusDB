@@ -22,7 +22,7 @@ RUN apk add --no-cache libc6-compat libstdc++ libgcc
 # 设置工作目录
 WORKDIR /app
 
-# 从构建阶段复制整个 ComDB 目录
+# 从构建阶段复制整个 NucleusDB 目录
 COPY --from=builder /app /app
 
 # 进入 raft/run 目录

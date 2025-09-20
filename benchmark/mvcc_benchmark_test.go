@@ -1,7 +1,7 @@
 package benchmark
 
 import (
-	"ComDB" // 导入你的ComDB包
+	"NucleusDB" // 导入你的NucleusDB包
 	"fmt"
 	"math/rand"
 	"sync/atomic"
@@ -10,19 +10,19 @@ import (
 
 // Benchmark_ConcurrentTxn 测试并发事务吞吐量
 func Benchmark_ConcurrentTxn(b *testing.B) {
-	opts := ComDB.DefaultOptions
+	opts := NucleusDB.DefaultOptions
 	opts.DirPath = "./tmp-bench" // 测试专用目录
-	db, err := ComDB.Open(opts)
+	db, err := NucleusDB.Open(opts)
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer db.Close()
 
-	update := ComDB.NewUpdate(1000, db) // 大容量watermark
+	update := NucleusDB.NewUpdate(1000, db) // 大容量watermark
 	keys := [][]byte{[]byte("key1"), []byte("key2"), []byte("key3")}
 
 	// 初始化测试数据
-	_, err = update.Update(func(txn *ComDB.Txn) error {
+	_, err = update.Update(func(txn *NucleusDB.Txn) error {
 		for _, key := range keys {
 			if err := txn.Put(key, []byte("init_value")); err != nil {
 				return err
@@ -37,7 +37,7 @@ func Benchmark_ConcurrentTxn(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, _ = update.Update(func(txn *ComDB.Txn) error {
+			_, _ = update.Update(func(txn *NucleusDB.Txn) error {
 				// 随机读写操作
 				key := keys[rand.Intn(len(keys))]
 				_ = txn.Get(key)                     // 读
@@ -48,14 +48,14 @@ func Benchmark_ConcurrentTxn(b *testing.B) {
 }
 
 func Benchmark_MVCCConflict(b *testing.B) {
-	db, _ := ComDB.Open(ComDB.DefaultOptions)
+	db, _ := NucleusDB.Open(NucleusDB.DefaultOptions)
 	defer db.Close()
 
-	update := ComDB.NewUpdate(1000, db)
+	update := NucleusDB.NewUpdate(1000, db)
 	keys := [][]byte{[]byte("key1"), []byte("key2"), []byte("key3")}
 
 	// 初始化测试数据
-	_, _ = update.Update(func(txn *ComDB.Txn) error {
+	_, _ = update.Update(func(txn *NucleusDB.Txn) error {
 		for _, key := range keys {
 			_ = txn.Put(key, []byte("init_value"))
 		}
@@ -68,7 +68,7 @@ func Benchmark_MVCCConflict(b *testing.B) {
 	// 模拟读写混合事务
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, err := update.Update(func(txn *ComDB.Txn) error {
+			_, err := update.Update(func(txn *NucleusDB.Txn) error {
 				// 阶段1：写入多个key（制造修改点）
 				for i := 0; i < 3; i++ {
 					key := keys[rand.Intn(len(keys))]
@@ -100,17 +100,17 @@ func Benchmark_MVCCConflict(b *testing.B) {
 
 // Benchmark_LongRunningTxn 测试长事务稳定性
 func Benchmark_LongRunningTxn(b *testing.B) {
-	db, err := ComDB.Open(ComDB.DefaultOptions)
+	db, err := NucleusDB.Open(NucleusDB.DefaultOptions)
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer db.Close()
 
-	update := ComDB.NewUpdate(1000, db)
+	update := NucleusDB.NewUpdate(1000, db)
 	keys := generateKeys(1000) // 生成1000个测试key
 
 	// 初始化数据
-	_, err = update.Update(func(txn *ComDB.Txn) error {
+	_, err = update.Update(func(txn *NucleusDB.Txn) error {
 		for _, key := range keys {
 			if err := txn.Put(key, []byte("init")); err != nil {
 				return err
@@ -125,7 +125,7 @@ func Benchmark_LongRunningTxn(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// 模拟长事务：读取大量数据后修改少量key
-		_, _ = update.Update(func(txn *ComDB.Txn) error {
+		_, _ = update.Update(func(txn *NucleusDB.Txn) error {
 			for j := 0; j < 100; j++ { // 读100个key
 				_ = txn.Get(keys[rand.Intn(len(keys))])
 			}
@@ -136,16 +136,16 @@ func Benchmark_LongRunningTxn(b *testing.B) {
 
 // Benchmark_WatermarkGC 测试水位线GC性能
 func Benchmark_WatermarkGC(b *testing.B) {
-	db, err := ComDB.Open(ComDB.DefaultOptions)
+	db, err := NucleusDB.Open(NucleusDB.DefaultOptions)
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer db.Close()
-	update := ComDB.NewUpdate(100, db) // 小容量watermark加压GC
+	update := NucleusDB.NewUpdate(100, db) // 小容量watermark加压GC
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// 提交事务触发GC
-		_, _ = update.Update(func(txn *ComDB.Txn) error {
+		_, _ = update.Update(func(txn *NucleusDB.Txn) error {
 			return txn.Put([]byte("key"), []byte("value"))
 		})
 		if i%10 == 0 { // 每10次强制GC

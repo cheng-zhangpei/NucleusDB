@@ -1,24 +1,24 @@
 package main
 
 import (
-	ComDB "ComDB"
-	"ComDB/search"
+	NucleusDB "NucleusDB"
+	"NucleusDB/search"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 )
 
-var db *ComDB.DB
+var db *NucleusDB.DB
 var compressor *search.Compressor
 
 func init() {
 	// 初始化 DB 实例
 	var err error
-	options := ComDB.DefaultOptions
+	options := NucleusDB.DefaultOptions
 	// todo 一定是允许用户自己配置数据库信息的，这个地方对用户暂时没有很友好
 	options.DirPath = "/tmp/bitcask_http_server"
-	db, err = ComDB.Open(options)
+	db, err = NucleusDB.Open(options)
 	if err != nil {
 		panic(fmt.Sprintf("failed to open db: %v", err))
 	}
@@ -81,13 +81,13 @@ func handleGet(writer http.ResponseWriter, request *http.Request) {
 	log.Printf("Received GET request for key: %s\n", key)
 
 	value, err := db.Get([]byte(key))
-	if err != nil && err != ComDB.ErrKeyNotFound {
+	if err != nil && err != NucleusDB.ErrKeyNotFound {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		log.Printf("Failed to get value for key: key=%s, error=%v\n", key, err)
 		return
 	}
 
-	if err == ComDB.ErrKeyNotFound {
+	if err == NucleusDB.ErrKeyNotFound {
 		log.Printf("Key not found: key=%s\n", key)
 	} else {
 		log.Printf("Successfully retrieved value for key: key=%s, value=%s\n", key, string(value))
@@ -188,7 +188,7 @@ func handlePrefix(writer http.ResponseWriter, request *http.Request) {
 	log.Printf("Received request to query keys with prefix: %s\n", prefix)
 
 	// 使用迭代器遍历匹配前缀的键值对
-	iterator := db.NewIterator(ComDB.IteratorOptions{
+	iterator := db.NewIterator(NucleusDB.IteratorOptions{
 		Prefix:  []byte(prefix),
 		Reverse: false, // 是否反向遍历
 	})
@@ -311,7 +311,7 @@ func handleMemoryDelete(writer http.ResponseWriter, request *http.Request) {
 
 // handleMemorySearch 处理搜索记忆的请求
 func handleMemorySearch(writer http.ResponseWriter, request *http.Request) {
-	opts := ComDB.DefaultCompressOptions
+	opts := NucleusDB.DefaultCompressOptions
 	if request.Method != http.MethodGet {
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -372,7 +372,7 @@ func handleCreateMemoryMeta(writer http.ResponseWriter, request *http.Request) {
 
 // handleCompress 处理压缩请求
 func handleCompress(writer http.ResponseWriter, request *http.Request) {
-	opt := ComDB.DefaultCompressOptions
+	opt := NucleusDB.DefaultCompressOptions
 	if request.Method != http.MethodPost {
 		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -432,7 +432,7 @@ func handleCreateCompressor(writer http.ResponseWriter, request *http.Request) {
 		AgentID  string `json:"agentId"`
 		Endpoint string `json:"endpoint"`
 	}
-	opt := ComDB.DefaultCompressOptions
+	opt := NucleusDB.DefaultCompressOptions
 	if compressor == nil {
 		ms := &search.MemoryStructure{
 			Db: db,
@@ -460,7 +460,7 @@ func healthyCheck(writer http.ResponseWriter, request *http.Request) {
 	// 构造健康检查的响应内容
 	response := map[string]string{
 		"status":  "healthy",
-		"message": "ComDB server is running",
+		"message": "NucleusDB server is running",
 	}
 
 	// 将响应内容编码为JSON
@@ -479,16 +479,16 @@ func healthyCheck(writer http.ResponseWriter, request *http.Request) {
 func main() {
 
 	// 创建一个新的日志记录器，输出到标准输出（终端）
-	log.Println("欢迎使用 ComDB！")
+	log.Println("欢迎使用 NucleusDB！")
 	log.Println("========================================")
 	log.Println("您当前正在单机模式下运行。")
 	log.Println()
 	log.Println("单机模式适用于开发、测试以及小型应用。")
-	log.Println("它允许您在本地机器上充分利用 ComDB 的功能，")
+	log.Println("它允许您在本地机器上充分利用 NucleusDB 的功能，")
 	log.Println("提供流畅且响应迅速的使用体验。")
 	log.Println()
 	log.Println()
-	log.Println("如需更多信息，请访问我的文档：https://github.com/cheng-zhangpei/ComDB/blob/main/doc/doc.md")
+	log.Println("如需更多信息，请访问我的文档：https://github.com/cheng-zhangpei/NucleusDB/blob/main/doc/doc.md")
 	log.Println("========================================")
 
 	// 注册处理方法

@@ -1,7 +1,7 @@
 package index
 
 import (
-	"ComDB/data"
+	"NucleusDB/data"
 	"bytes"
 	"github.com/google/btree"
 	_ "github.com/google/btree"
