@@ -168,6 +168,7 @@ func insertionSort(sl []uint64) {
 
 // Committed 返回所有节点的共同可提交的index,也就是可以共同match的index
 // todo 其实需要一个Quorum来判断操作是否共识合法 但是由于我比较懒所以懒得再加上合法性判断了
+// todo
 func (p *ProgressTracker) Committed() uint64 {
 	minIndex := uint64(0)
 	first := true

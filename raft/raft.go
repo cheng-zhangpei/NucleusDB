@@ -279,7 +279,7 @@ func (r *raft) appendEntry(es []*pb.Entry) (accepted bool) {
 		es[i].Term = r.Term
 		es[i].Index = li + uint64(i)
 	}
-	// 确保未提交的数据更新到uncommitedSize中，这里是提交的字节数量
+	// 确保提交的数据不超过缓冲区的大小
 	if !r.increaseUncommittedSize(es) {
 		log.Printf(
 			"%x appending new entries to log would exceed uncommitted entry size limit; dropping proposal\n",
@@ -293,20 +293,18 @@ func (r *raft) appendEntry(es []*pb.Entry) (accepted bool) {
 	// 更新自己的progress状态说明自己最新的匹配位置并且还要说明现在当前节点不属于探针状态
 	r.processTracker.Progress[r.id].MaybeUpdate(uint64(lastIndex))
 	//// Regardless of maybeCommit's return, our caller will call bcastAppend.
-	// 这里先更新commited的参数实际这个地方还没有更新，因为这里设计的数据更新是异步的
+	// 异步更新Commited指针
 	r.maybeCommit()
 	return true
 }
 
-// maybeCommit 检查当前 Raft 节点的日志条目是否可以被提交（committed）。在 Raft 协议中，日志条目只有在被大多数
-// 节点复制后才能被认为是已提交的。r.maybeCommit() 会检查每个节点的 Match 指针，确定是否有足够的节点
-// 已经复制了某个日志条目，从而推进 CommitIndex
+// maybeCommit 异步更新Commited指针
 func (r *raft) maybeCommit() bool {
 	//遍历所有节点的 Match 指针，收集每个节点的最新匹配日志索引。
 	//使用这些索引计算当前可以提交的日志索引。
 	//更新 CommitIndex，使其指向可以提交的日志条目
 	commonMatchIndex := r.processTracker.Committed()
-	// 判断是否需要更新Committed指针
+	// 将当前的commit指针指向即将要更新的commit节点
 	return r.raftLog.maybeCommit(commonMatchIndex, r.Term)
 }
 

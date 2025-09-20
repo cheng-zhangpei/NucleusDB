@@ -186,10 +186,12 @@ func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 
 	return 0, false
 }
+
+// 这个函数的意思是我所有节点的即将commit的Index是不能超过缓冲区的大小的，否则就溢出了
 func (l *raftLog) commitTo(tocommit uint64) {
 	// never decrease commit
 	if l.committed < tocommit {
-		// 所以这就是一开始不统一index的第一个元素下标的后果
+
 		if l.lastIndex() <= tocommit {
 			log.Fatalf("tocommit(%d) is out of range [lastIndex(%d)]. Was the raft log corrupted, truncated, or lost?\n", tocommit, l.lastIndex())
 		}
@@ -227,6 +229,7 @@ func (l *raftLog) findConflict(ents []*pb.Entry) uint64 {
 	}
 	return 0
 }
+
 func (l *raftLog) maybeCommit(maxIndex, term uint64) bool {
 	if maxIndex > l.committed {
 		l.commitTo(maxIndex)
