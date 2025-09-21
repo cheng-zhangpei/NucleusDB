@@ -20,18 +20,21 @@ This project originated as an undergraduate thesis and represents a complete end
 
 ## 📚 Research Context
 
-NucleusDB was developed to solve the critical bottleneck of managing vast amounts of long-term memory data for AI agents. Instead of treating the database as a simple external store, this project integrates memory management logic directly into the database layer, providing a seamless interface for LLM applications.
+​	ComDB was developed to solve the critical bottleneck of managing vast amounts of long-term memory data for AI agents. Instead of treating the database as a simple external store, this project integrates memory management logic directly into the database layer, providing a seamless interface for LLM applications.
 
-The work serves as the foundational memory backend for a larger vision: **KubeNucleus**, a proposed intelligent data center management system where AI oversees cloud-native infrastructure.
+​	The work serves as the foundational memory backend for a larger vision: **KubeNucleus**, a proposed intelligent data center management system where AI oversees cloud-native infrastructure.
+
+​	I hope the project can not only used to convenient the inference of LLM, but also convenient the training of LLM. The final goal of this project is to let DB can understand the meaning of the data it store.
 
 ## 🔧 Getting Started
 
 ### Prerequisites
 
-*   Go 1.20+
+*   Go 1.22.0
+*   toolchain go1.22.10
 *   Protocol Buffers Compiler (`protoc`)
 *   gRPC-Go plugin
-*   ZooKeeper (for the distributed timestamp service)
+*   ZooKeeper (for the distributed timestamp service,if just use single node mode, can ignore)
 
 ### Installation
 
@@ -39,6 +42,8 @@ The work serves as the foundational memory backend for a larger vision: **KubeNu
 
 ## 📊 Performance
 
-Initial benchmarks show competitive performance for a prototype system. The single-node engine achieves microsecond-level latency for common operations. The distributed version introduces network overhead but maintains functional correctness and consistency. Performance optimization, especially for the Raft message pipeline under heavy load, is a key area for future work.
+​	The current system is a personal research project developed within limited time and resources. As a result, the overall performance is modest and has not been rigorously optimized. Many potential benchmarks—especially under high concurrency or large-scale data scenarios—have not been conducted due to hardware and time constraints. The implementation prioritizes functional correctness and architectural exploration over raw speed. While core features such as distributed consensus and transaction management are functional, further optimization and stress testing are needed to evaluate its scalability and efficiency in real-world environments.	
 
-> **Note:** The current implementation is a research prototype. While it demonstrates core concepts effectively, it may not yet be suitable for production environments without further hardening and testing.
+## Issue
+
+​	you can see Issue module of the repository or [Issue](https://github.com/cheng-zhangpei/NucleusDB/tree/main/doc/issues.md)

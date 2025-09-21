@@ -252,21 +252,23 @@ func (ms *MemoryStorage) Append(entries []*pb.Entry) int64 {
 	first := ms.firstIndex()
 	last := entries[0].Index + uint64(len(entries)) - 1
 
-	// shortcut if there is no new entry.
+	// 如果append的entry完全没有在缓冲区的范围内
 	if last < first {
 		return -1
 	}
-	// truncate compacted entries
+	// 对可以放入缓冲区中的内容进行截断，这个操作是保证日志的index一定是递增的
 	if first > entries[0].Index {
 		entries = entries[first-entries[0].Index:]
 	}
 	// offset是存入日志的第一个元素与当前日志的第一个元素之间的偏移
+	// 换句话来说这个是同步起点！
 	var offset uint64 = 0
 	if len(ms.ents) != 0 {
 		offset = entries[0].Index - ms.ents[0].Index
 	}
+
 	switch {
-	// 如果暂存区的数据长度大于offset
+	// 如果暂存区的数据长度大于offset，也就是现在follower的长度长于同步起点，说明有一部分的日志是需要截断的
 	case uint64(len(ms.ents)) > offset:
 		// 截断现在的暂存区，按照最新的日志往后拓展
 		ms.ents = append([]*pb.Entry{}, ms.ents[:offset]...)

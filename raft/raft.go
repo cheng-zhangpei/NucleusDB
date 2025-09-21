@@ -434,6 +434,7 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		if r.processTracker.Progress[r.id] == nil {
 			return ErrProposalDropped
 		}
+		// 更新节点状态以保证一致性
 		if !r.appendEntry(msg.Entries) {
 			return ErrProposalDropped
 		}
@@ -687,24 +688,20 @@ func (r *raft) startElection(msg *pb.Message) {
 	// judge if the candidate can be the leader
 }
 
-// handleVoteRequest处理投票请求消息，决定是否授予投票。
+// handleVoteRequest 处理投票请求消息，决定是否授予投票。
 func (r *raft) handleVoteRequest(msg *pb.Message) {
 	if r.state == StateLeader {
 		log.Printf("leader can not handle the vote request")
 		return
 	}
-	// 如果拿到了投票的请求就别再继续选拔了，但是也不用转成follower，candidate也可以去投票
+	// 如果收到了投票请求，重置选举计时器
 	r.electionElapsed = 0
-	// two factor: 1. the node receive the msg that it has voted. 2. do not vote yet
-	// 真的忍不住想要吐槽，vote和leader被初始化为0了，我就说为啥会疯狂被拒绝.....
+	// 判断是否有资格投票：1. 尚未投票给他人 2. 不知道当前 Leader 是谁
 	canVote := r.Vote == 0 && r.lead == 0
-	//if canVote && r.raftLog.isUpToDate(m.Index, m.LogTerm) { // judge if the candidate have the qualification to ask for vote
-	//
-	//}
-	// If votedFor is null or candidateId, and candidate’s log is at
-	// least as up-to-date as receiver’s log, grant vote
+	// 关键的安全阀：候选者的日志必须至少和我一样新
+	logIsUpToDate := r.raftLog.isUpToDate(msg.Index, msg.Term)
 	var msgType pb.MessageType = pb.MessageType_MsgVoteResp
-	if canVote {
+	if canVote && logIsUpToDate {
 		log.Printf("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d\n",
 			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
 
@@ -714,8 +711,8 @@ func (r *raft) handleVoteRequest(msg *pb.Message) {
 	} else {
 		log.Printf("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d\n",
 			r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, msg.Type, msg.From, msg.Term, msg.Index, r.Term)
-		var reject = true
-		r.send(&pb.Message{To: msg.From, Term: r.Term, Type: msgType, Reject: reject})
+
+		r.send(&pb.Message{To: msg.From, Term: r.Term, Type: msgType, Reject: true})
 	}
 }
 
@@ -847,9 +844,8 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	}
 	m := pb.Message{}
 	m.To = to
-
 	term, _ := r.raftLog.storage.Term(pr.Next - 1)
-	// 将follower的想要的数据之后的数据段发送出去，这里是直接发送到结尾
+	// 这个数据是缓冲区中pr.Next所指向的地方，这个地方的数据是我们之前更新过的
 	ents := r.ms.ents[pr.Next-1:]
 	if len(ents) == 0 && !sendIfEmpty {
 		return false
@@ -881,46 +877,6 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	r.send(&m)
 	return true
 }
-
-//todo 与上层数据的交互暂时先不说
-
-//func (r *raft) advance(rd Ready) {
-//	r.reduceUncommittedSize(rd.CommittedEntries)
-//	// If entries were applied (or a snapshot), update our cursor for
-//	// the next Ready. Note that if the current HardState contains a
-//	// new Commit index, this does not mean that we're also applying
-//	// all of the new entries due to commit pagination by size.
-//	if newApplied := rd.appliedCursor(); newApplied > 0 {
-//		oldApplied := r.raftLog.applied
-//		r.raftLog.appliedTo(newApplied)
-//
-//		if r.prs.Config.AutoLeave && oldApplied <= r.pendingConfIndex && newApplied >= r.pendingConfIndex && r.state == StateLeader {
-//			// If the current (and most recent, at least for this leader's term)
-//			// configuration should be auto-left, initiate that now. We use a
-//			// nil Data which unmarshals into an empty ConfChangeV2 and has the
-//			// benefit that appendEntry can never refuse it based on its size
-//			// (which registers as zero).
-//			ent := pb.Entry{
-//				Type: pb.EntryConfChangeV2,
-//				Data: nil,
-//			}
-//			// There's no way in which this proposal should be able to be rejected.
-//			if !r.appendEntry(ent) {
-//				panic("refused un-refusable auto-leaving ConfChangeV2")
-//			}
-//			r.pendingConfIndex = r.raftLog.lastIndex()
-//			r.logger.Infof("initiating automatic transition out of joint configuration %s", r.prs.Config)
-//		}
-//	}
-//
-//	if len(rd.Entries) > 0 {
-//		e := rd.Entries[len(rd.Entries)-1]
-//		r.raftLog.stableTo(e.Index, e.Term)
-//	}
-//	if !IsEmptySnap(rd.Snapshot) {
-//		r.raftLog.stableSnapTo(rd.Snapshot.Metadata.Index)
-//	}
-//}
 
 func (r *raft) resetRandomizedElectionTimeout() {
 	// 使用当前时间作为随机数生成器的种子

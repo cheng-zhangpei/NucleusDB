@@ -248,3 +248,26 @@ func (l *raftLog) isEntriesEmpty() bool {
 	}
 	return entries[0] == nil
 }
+
+// 安全阀，也就是规则
+// Rules:
+//   - If the candidate's last entry term is greater than ours, it is up-to-date.
+//   - If the terms are equal, and the candidate's last entry index is >= ours, it is up-to-date.
+//   - Otherwise, it is not up-to-date.
+func (l *raftLog) isUpToDate(index uint64, term uint64) bool {
+	// Get the index and term of the last entry in our own log.
+	myLastIndex := l.lastIndex()
+	myLastTerm := l.lastTerm()
+	// Rule 1: If the candidate's LogTerm is higher, its log is more up-to-date.
+	if term > myLastTerm {
+		return true
+	}
+	// Rule 2: If the LogTerms are equal, we compare the indices.
+	//         The candidate's log is more up-to-date if its index is greater than or equal to ours.
+	if term == myLastTerm && index >= myLastIndex {
+		return true
+	}
+	// In all other cases (term < myLastTerm, or term==myLastTerm but index < myLastIndex),
+	// the candidate's log is not up-to-date.
+	return false
+}
