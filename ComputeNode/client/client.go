@@ -24,6 +24,7 @@ type DistributeOperation interface {
 }
 
 // StandAloneOperation interface for single node database
+// todo 暂时不想做,偷懒的czp
 type StandAloneOperation interface {
 	StandAloneGet([]byte) ([]byte, error)
 	StandAlonePut([]byte, []byte) error

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"ComputeNode"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -45,14 +46,13 @@ func (nc *NucleusClient) TxnGet(key []byte) error {
 func (nc *NucleusClient) TxnPut(key []byte, value []byte) error {
 	httpAddr := nc.HttpServer
 	id := nc.raftId
-	log.Println("send to : " + httpAddr)
 
 	kv := map[string]string{string(key): string(value)}
 	jsonData, _ := json.Marshal(kv)
 	if len(jsonData) == 0 {
 		log.Fatal("Empty JSON data")
 	}
-	log.Println(httpAddr)
+
 	url := fmt.Sprintf("http://%s/raft/%d/TxnSet", httpAddr, id)
 	resp, err := nc.sendRequestWithRedirect(http.MethodPost, url, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -156,6 +156,9 @@ func (nc *NucleusClient) DistributeGet(key []byte) ([]byte, error) {
 	if err := json.Unmarshal(body, &valueStr); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON response: %v", err)
 	}
+	if len(valueStr) == 0 {
+		return []byte(""), ComputeNode.ErrKeyNotFound
+	}
 	log.Printf("Successfully retrieved value via HTTP: key=%s, value=%s", string(key), valueStr)
 	return []byte(valueStr), nil
 }
@@ -191,7 +194,6 @@ func (nc *NucleusClient) DistributeDelete(key []byte) error {
 	httpAddr := nc.HttpServer
 	id := nc.raftId
 	deleteEndpoint := fmt.Sprintf("http://%s/raft/%d/delete", httpAddr, id)
-	log.Println(deleteEndpoint)
 	// 创建请求体（如果需要的话，根据服务端实现调整）
 	// 由于服务端通过 URL query 参数获取 key，这里可以传空 body 或者包含 key 的 JSON
 	kv := map[string]string{"key": string(key)}
@@ -290,10 +292,8 @@ func (nc *NucleusClient) sendRequestWithRedirect(method, url string, body io.Rea
 			resp.Body.Close()
 
 			pairs := strings.Split(string(redirectBody), ",")
-			log.Println(pairs)
 			for _, pair := range pairs {
 				kv := strings.Split(pair, "=")
-				log.Println(kv[0])
 
 				if len(kv) != 2 {
 					continue
