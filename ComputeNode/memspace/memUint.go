@@ -17,7 +17,6 @@ type MemUint struct {
 	unitType       ComputeType
 	lastUpdateTime time.Time
 	// todo 后续应该会根据组织形式修改单个元素的布局
-
 }
 
 func NewMemUint(key []byte, value []byte, unitType ComputeType) *MemUint {

@@ -1,6 +1,18 @@
 // Package ComputeNode
-// /*the http entry of the compute node*/
+
 package ComputeNode
 
-// We should finish vector computation node at first
+import (
+	"ComputeNode/agent"
+	"ComputeNode/memspace"
+)
+
 const NODETYPE = "VECTOR"
+
+// ComputeNode : Unified External Interface for Computing Nodes
+type ComputeNode struct {
+	nodeType string
+	nodeName string
+	mpm      *memspace.MemSpaceManager
+	ap       *agent.AgentPool
+}

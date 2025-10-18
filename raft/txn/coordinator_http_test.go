@@ -8,6 +8,5 @@ const httpAddr = "127.0.0.1:21820"
 
 func TestNewCoordinator(t *testing.T) {
 	// 启动http服务器就ok了
-
 	NewCoordinatorHTTP(zkAddr, httpAddr)
 }

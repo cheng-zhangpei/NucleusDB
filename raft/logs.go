@@ -53,7 +53,39 @@ func (l *raftLog) nextEnts() (ents []*pb.Entry) {
 	}
 	return nil
 }
+func (l *raftLog) truncateLogBeforeConflict(conflict uint64) error {
+	// 1. 获取当前所有日志
+	currentEntries, err := l.storage.GetEntries()
+	if err != nil {
+		return fmt.Errorf("failed to get current entries: %v", err)
+	}
 
+	// 2. 截断到冲突点之前
+	var truncatedEntries []*pb.Entry
+	if conflict-1 >= l.firstIndex() && conflict-1 <= l.lastIndex() {
+		// 找到冲突点之前的所有日志
+		for i := 0; i < len(currentEntries); i++ {
+			if currentEntries[i].Index < conflict {
+				truncatedEntries = append(truncatedEntries, currentEntries[i])
+			} else {
+				break
+			}
+		}
+		log.Printf("Truncated log before conflict %d, kept %d entries", conflict, len(truncatedEntries))
+	} else {
+		// 如果冲突点超出范围，保留所有现有日志
+		truncatedEntries = currentEntries
+		log.Printf("Conflict %d out of range [%d, %d], keeping all %d entries",
+			conflict, l.firstIndex(), l.lastIndex(), len(truncatedEntries))
+	}
+
+	// 3. 清空存储并重新写入截断后的日志
+	if err := l.storage.Reset(truncatedEntries); err != nil {
+		return fmt.Errorf("failed to reset storage: %v", err)
+	}
+
+	return nil
+}
 func (l *raftLog) firstIndex() uint64 {
 	index, err := l.storage.FirstIndex()
 	if err != nil {
@@ -144,6 +176,7 @@ func (l *raftLog) findConflictByTerm(index uint64, logTerm uint64) uint64 {
 func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 	logTerm := msg.LogTerm
 	index := msg.Index
+	// 在目前这个节点,对于这个msg本身的位置是匹配的
 	if l.matchIndex(index, logTerm) || l.isEntriesEmpty() {
 
 		// leader and follower have the same entry in this index
@@ -151,36 +184,40 @@ func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 		newIndex := l.storage.LastIndex() + uint64(len(msg.Entries))
 		// 就这现在最新的位置往前找冲突
 		conflict := l.findConflict(msg.Entries)
+		// 这很恐怖,冲突点已经提交了,我已经没法在缓冲区中去改变数据了
+		if conflict > 0 && conflict <= l.committed {
+			return 0, false
+		}
+
 		switch {
 		case conflict == 0:
 			// 不存在冲突就直接放入
 			_ = l.storage.Append(msg.Entries[:])
-
 		case conflict <= l.committed:
 			log.Fatalf("entry %d conflict with committed entry [committed(%d)]\n", conflict, l.committed)
 		default:
-			// 计算冲突后需要追加的日志条目起始索引
+			log.Printf("node follower start process conflict at index %d!\n", conflict)
+			// 对当前的日志数据进行截断
+			if err := l.truncateLogBeforeConflict(conflict); err != nil {
+				log.Printf("Failed to truncate log before conflict: %v", err)
+				return 0, false
+			}
+			// 在截断数据之后去添加
 			start := max(conflict-index, 0)
-			// 追加从冲突点开始的日志条目
-
 			_ = l.storage.Append(msg.Entries[start:])
+
+			// 调试输出
 			FollowerEnts, err := l.storage.GetEntries()
 			if err != nil {
 				panic(err)
 			}
+			log.Printf("After conflict resolution - entries:")
 			for _, entry := range FollowerEnts {
-				fmt.Println(entry)
+				log.Printf("Index: %d, Term: %d", entry.Index, entry.Term)
 			}
 		}
 		// update commited field in raftLog，这里要判断好提交信息是否合法
 		l.commitTo(min(msg.Commit, newIndex))
-		//FollowerEnts, err := l.storage.GetEntries()
-		//if err != nil {
-		//	panic(err)
-		//}
-		//for _, entry := range FollowerEnts {
-		//	fmt.Println(entry)
-		//}
 		return newIndex, true
 	}
 

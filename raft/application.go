@@ -83,6 +83,7 @@ func (app *application) apply(command string, key string, value string) (string,
 		}
 	case "DELETE":
 		// do delete -> 删除本地数据库里面的数据
+		log.Println("已经在本地数据中删除")
 		err := app.DB.Delete([]byte(key))
 		if err != nil {
 			return "", err

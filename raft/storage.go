@@ -3,6 +3,7 @@ package raft
 import (
 	"NucleusDB/raft/pb"
 	"errors"
+	"fmt"
 	_ "golang.org/x/exp/slog"
 	"log"
 	"sync"
@@ -47,6 +48,7 @@ type Storage interface {
 	// Append entry to MemoStorage
 	Append(entries []*pb.Entry) int64
 	matchTerm(i, term uint64) bool
+	Reset(entries []*pb.Entry) error
 }
 type MemoryStorage struct {
 	// Protects access to all fields. Most methods of MemoryStorage are
@@ -58,6 +60,40 @@ type MemoryStorage struct {
 	ents      []*pb.Entry
 }
 
+func (ms *MemoryStorage) Reset(entries []*pb.Entry) error {
+	ms.Lock()
+	defer ms.Unlock()
+
+	// 如果传入空切片，直接清空日志
+	if len(entries) == 0 {
+		ms.ents = []*pb.Entry{}
+		return nil
+	}
+
+	// 验证条目索引是连续递增的,不能是跳跃的不然可能会造成数据丢失
+	for i := 1; i < len(entries); i++ {
+		if entries[i].Index != entries[i-1].Index+1 {
+			return fmt.Errorf("entries are not continuous: index %d should be %d",
+				entries[i].Index, entries[i-1].Index+1)
+		}
+	}
+
+	// 深拷贝条目，避免外部修改影响内部数据
+	ms.ents = make([]*pb.Entry, len(entries))
+	for i, entry := range entries {
+		// 复制每个 Entry 对象
+		ms.ents[i] = &pb.Entry{
+			Index: entry.Index,
+			Term:  entry.Term,
+			Data:  entry.Data,
+			Type:  entry.Type,
+		}
+	}
+
+	log.Printf("Storage reset successfully. New log range: [%d, %d]",
+		ms.firstIndex(), ms.lastIndex())
+	return nil
+}
 func (ms *MemoryStorage) matchTerm(i, term uint64) bool {
 	t, err := ms.Term(i)
 	if err != nil {

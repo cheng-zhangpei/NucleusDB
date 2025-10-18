@@ -377,13 +377,17 @@ func (n *node) handleRaftPut(writer http.ResponseWriter, request *http.Request) 
 		log.Printf("Failed to decode request body: %v\n", err)
 		return
 	}
-	leaderID := n.rn.raft.lead
 	if n.rn.raft.state != StateLeader {
-		// 只返回 leader 的 ID
+		leaderID := n.rn.raft.lead
+		if leaderID < 1 || int(leaderID) > len(n.httpServerAddrList) {
+			http.Error(writer, "Invalid leader ID", http.StatusInternalServerError)
+			log.Printf("Invalid leader ID: %d", leaderID)
+			return
+		}
+		leaderAddr := n.httpServerAddrList[leaderID-1]
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(writer, leaderID)
-		log.Printf("only leader can put value. Current leader ID: %d\n", leaderID)
+		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
 		return
 	}
 	// 此处需要判断该事务暂存区中是否有数据
@@ -432,23 +436,38 @@ func (n *node) handleRaftDelete(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	// 将当前的leader信息返回
-	leaderID := n.rn.raft.lead
 	if n.rn.raft.state != StateLeader {
-		// 只返回 leader 的 ID
+		leaderID := n.rn.raft.lead
+		if leaderID < 1 || int(leaderID) > len(n.httpServerAddrList) {
+			http.Error(writer, "Invalid leader ID", http.StatusInternalServerError)
+			log.Printf("Invalid leader ID: %d", leaderID)
+			return
+		}
+		leaderAddr := n.httpServerAddrList[leaderID-1]
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(writer, leaderID)
-		log.Printf("only leader can delete value. Current leader ID: %d\n", leaderID)
+		fmt.Fprintf(writer, "LeaderID=%d,LeaderAddr=%s", leaderID, leaderAddr)
 		return
 	}
-	key := request.URL.Query().Get("key")
+	// 从 JSON 请求体中获取 key
+	var requestBody struct {
+		Key string `json:"key"`
+	}
+
+	if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+		http.Error(writer, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	key := requestBody.Key
+	log.Printf("Received DELETE request for key: %s\n", key)
+
 	if key == "" {
 		http.Error(writer, "Key is required", http.StatusBadRequest)
 		log.Println("Failed to delete: key is missing")
 		return
 	}
 
-	log.Printf("Received DELETE request for key: %s\n", key)
 	var logData = []byte("DELETE " + key)
 	msg := &msgWithResult{
 		entryDetails: logData,

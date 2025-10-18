@@ -293,7 +293,6 @@ func (r *raft) appendEntry(es []*pb.Entry) (accepted bool) {
 	// 更新自己的progress状态说明自己最新的匹配位置并且还要说明现在当前节点不属于探针状态
 	r.processTracker.Progress[r.id].MaybeUpdate(uint64(lastIndex))
 	//// Regardless of maybeCommit's return, our caller will call bcastAppend.
-	// 异步更新Commited指针
 	r.maybeCommit()
 	return true
 }
@@ -434,6 +433,8 @@ func stepLeader(r *raft, msg *pb.Message) error {
 		if r.processTracker.Progress[r.id] == nil {
 			return ErrProposalDropped
 		}
+		// 看一下是否收到了prop
+		log.Println(msg.Entries)
 		// 更新节点状态以保证一致性
 		if !r.appendEntry(msg.Entries) {
 			return ErrProposalDropped
@@ -553,6 +554,7 @@ func stepCandidate(r *raft, msg *pb.Message) error {
 		log.Fatalf("%x no leader at term %d; dropping proposal\n", r.id, r.Term)
 		return ErrProposalDropped
 	case pb.MessageType_MsgApp:
+		log.Println(msg.Entries)
 		_ = r.becomeFollower(msg.Term, msg.From) // always m.Term == r.Term
 		r.handleAppendEntries(msg)
 		println()
@@ -600,7 +602,13 @@ func (r *raft) handleAppendEntries(msg *pb.Message) {
 		r.send(&pb.Message{To: msg.From, Type: pb.MessageType_MsgAppResp, Index: r.raftLog.committed})
 		return
 	}
-	// 这些数据可以放入ms的缓冲区中
+	/*
+		这里本质是有两种不同的匹配策略
+		1 在msg的任期与index是相等的-> 在msg往后的entries会有冲突,那么就去进行截断
+		2 一开始msg的任期与index在这个节点就不一样了,这样其实就压根不知道这个msg在当前节点日志中到底是不是递增可能是位于缓冲区最新index的前面
+		node [1,2,3,4,5,6]
+		结果在msg中index = 3的位置不是4而是3
+	*/
 	if _, ok := r.raftLog.AppendWithConflictCheck(msg); ok {
 		// 将日志给提交
 		r.app.commitc <- msg.Entries
@@ -609,7 +617,6 @@ func (r *raft) handleAppendEntries(msg *pb.Message) {
 		// 将已经提交的数据再次发送给leader，让leader也进行提交
 		r.send(&pb.Message{To: msg.From, Type: pb.MessageType_MsgAppResp, Index: r.ms.lastIndex(), Entries: msg.Entries})
 	} else {
-		// 到这个位置说明第一个位置都没法匹配咯,要立刻开启探针模式 todo 这个后面的内容暂时可能没法测，工作量太大了
 
 		hintIndex := min(msg.Index, r.raftLog.lastIndex())
 		hintIndex = r.raftLog.findConflictByTerm(hintIndex, msg.LogTerm)
