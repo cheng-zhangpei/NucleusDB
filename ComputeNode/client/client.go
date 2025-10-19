@@ -21,6 +21,7 @@ type DistributeOperation interface {
 	DistributeGet([]byte) ([]byte, error)
 	DistributePut([]byte, []byte) error
 	DistributeDelete([]byte) error
+	DistributePrefixList([]byte) ([][]byte, error)
 }
 
 // StandAloneOperation interface for single node database

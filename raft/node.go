@@ -359,6 +359,7 @@ func removeNilMessages(msgs []*pb.Message) []*pb.Message {
 	}
 	return result
 }
+
 func (c *RaftClient) Close() error {
 	return c.conn.Close()
 }
@@ -428,6 +429,42 @@ func (n *node) handleRaftGet(writer http.ResponseWriter, request *http.Request) 
 
 	writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(writer).Encode(string(value))
+}
+
+func (n *node) handlePrefixList(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := request.URL.Query().Get("key")
+	log.Printf("Received prefix list request for key: %s\n", key)
+	// 现在返回的是 [][]byte，包含多个值
+	values, err := n.rn.raft.app.DB.FindByPrefix([]byte(key))
+	if err != nil && err != NucleusDB.ErrKeyNotFound {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		log.Printf("Failed to get prefix list for key: key=%s, error=%v\n", key, err)
+		return
+	}
+
+	if err == NucleusDB.ErrKeyNotFound || len(values) == 0 {
+		log.Printf("No values found with prefix: %s\n", key)
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode([]string{}) // 返回空数组
+		return
+	}
+
+	// 将 [][]byte 转换为 []string 用于 JSON 编码
+	var valueStrings []string
+	for _, valueBytes := range values {
+		valueStrings = append(valueStrings, string(valueBytes))
+	}
+
+	log.Printf("%d Successfully retrieved %d values for prefix: %s\n",
+		n.rn.raft.id, len(valueStrings), key)
+
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(valueStrings) // 编码字符串数组
 }
 
 func (n *node) handleRaftDelete(writer http.ResponseWriter, request *http.Request) {

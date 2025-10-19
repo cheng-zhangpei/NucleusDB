@@ -1,5 +1,5 @@
 package agent
 
-type AgentPool struct {
+type AgentManager struct {
 	agents []*agent
 }

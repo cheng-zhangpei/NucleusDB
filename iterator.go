@@ -71,11 +71,14 @@ func (it *Iterator) skipToNext() {
 	if prefixLen == 0 {
 		return
 	}
-	for ; it.indexIter.Valid(); it.indexIter.Next() {
+
+	for it.indexIter.Valid() {
 		key := it.indexIter.Key()
-		if prefixLen < len(key) && bytes.Compare(key[:prefixLen], it.options.Prefix) == 0 {
-			// 如果前缀是符合的话,就跳出去，不然就直到遍历完所有的key
-			break
+		// 检查前缀是否匹配
+		if len(key) >= prefixLen && bytes.Equal(key[:prefixLen], it.options.Prefix) {
+			break // 找到匹配的，停止跳过
 		}
+		// 不匹配，继续下一个
+		it.indexIter.Next()
 	}
 }

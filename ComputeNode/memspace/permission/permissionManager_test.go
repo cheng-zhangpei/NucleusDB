@@ -1,4 +1,4 @@
-package memspace
+package permission
 
 import (
 	"github.com/stretchr/testify/assert"

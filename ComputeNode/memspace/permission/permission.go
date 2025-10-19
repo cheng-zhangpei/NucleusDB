@@ -1,4 +1,4 @@
-package memspace
+package permission
 
 // MemSpacePermission defines the types of permissions for memory space access
 type MemSpacePermission int

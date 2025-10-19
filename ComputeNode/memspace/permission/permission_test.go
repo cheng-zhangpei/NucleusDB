@@ -1,4 +1,4 @@
-package memspace
+package permission
 
 import (
 	"fmt"

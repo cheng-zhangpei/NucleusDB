@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -227,6 +228,51 @@ func (nc *NucleusClient) DistributeDelete(key []byte) error {
 		}
 	}
 	return nil
+}
+func (nc *NucleusClient) DistributePrefixList(key []byte) ([][]byte, error) {
+	httpAddr := nc.HttpServer
+	id := nc.raftId
+	url := fmt.Sprintf("http://%s/raft/%d/prefix?key=%s", httpAddr, id, url.QueryEscape(string(key)))
+
+	resp, err := nc.sendRequestWithRedirect(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("prefix list request failed after retries: %v", err)
+	}
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
+
+	// 检查HTTP状态码
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return [][]byte{}, nil // 返回空数组而不是错误
+		}
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("prefix list failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 读取并解析JSON响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	// 解析JSON数组
+	var valueStrings []string
+	if err := json.Unmarshal(body, &valueStrings); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON response: %v", err)
+	}
+
+	// 转换为 [][]byte
+	var results [][]byte
+	for _, str := range valueStrings {
+		results = append(results, []byte(str))
+	}
+
+	log.Printf("Successfully retrieved %d values for prefix: %s", len(results), string(key))
+	return results, nil
 }
 
 // ======================================some functional methods============================================================

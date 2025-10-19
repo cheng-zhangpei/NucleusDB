@@ -581,6 +581,49 @@ func (db *DB) loadIndexFromDataFiles() error {
 	db.seqNo = uint64(currentSeqNo)
 	return nil
 }
+func (db *DB) FindByPrefix(prefix []byte) ([][]byte, error) {
+	opts := IteratorOptions{
+		Prefix:  prefix,
+		Reverse: false,
+	}
+
+	iter := db.NewIterator(opts)
+	defer iter.Close()
+
+	var results [][]byte
+
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		value, err := iter.Value()
+		if err != nil {
+			return nil, err
+		}
+		// 只保存值，不保存key
+		results = append(results, value)
+	}
+
+	return results, nil
+}
+
+// FindKeysByPrefix 只返回匹配的键（不返回值，更高效）
+func (db *DB) FindKeysByPrefix(prefix []byte) ([][]byte, error) {
+	opts := IteratorOptions{
+		Prefix:  prefix,
+		Reverse: false,
+	}
+
+	iter := db.NewIterator(opts)
+	defer iter.Close()
+
+	var keys [][]byte
+
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		key := make([]byte, len(iter.Key()))
+		copy(key, iter.Key())
+		keys = append(keys, key)
+	}
+
+	return keys, nil
+}
 
 // 这里就是专门用一个文件来保存B+树的序列号，如果是持久化索引不需要在内存中构建
 func (db *DB) loadSeqNo() error {

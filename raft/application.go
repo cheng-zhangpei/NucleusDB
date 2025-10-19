@@ -4,6 +4,7 @@ import (
 	"NucleusDB"
 	"NucleusDB/raft/pb"
 	"NucleusDB/search"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -142,6 +143,18 @@ func (app *application) apply(command string, key string, value string) (string,
 			return "", err
 		}
 		app.resultc <- content
+
+	case "ListPrefix":
+		prefixList, err := app.DB.FindByPrefix([]byte(key))
+		if err != nil {
+			return "", err
+		}
+		jsonData, err := json.Marshal(prefixList)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal prefix list: %v", err)
+		}
+
+		app.resultc <- jsonData
 	}
 	return "", nil
 }

@@ -1,4 +1,4 @@
-package memspace
+package permission
 
 // PermissionManager manages access control for memory spaces
 type PermissionManager struct {

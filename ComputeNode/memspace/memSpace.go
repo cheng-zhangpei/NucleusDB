@@ -1,10 +1,5 @@
 package memspace
 
-import (
-	"ComputeNode/code"
-	"ComputeNode/compute"
-)
-
 // MemSpaceType the type pf the memspace
 type MemSpaceType int
 
@@ -24,39 +19,59 @@ const (
 )
 
 type MemSpace struct {
+	CreateAgentId uint64
+	// MemSpaceId can not repeat in a system
+	MemSpaceId uint64
 	// allow multi-agent binding
 	bindingAgents []uint64
-	// memory uint layout// todo 思考一下这里的Uint也就是实际的记忆空间到底如何搞比较好
+	// persistent memory uint layout
 	memUints []*MemUint
-	// the type of
-	spaceType *MemSpaceType
+	// content of temp conversation
+	TempMemUnits []*TempMemUnit
+	// vector datatype record
+	vectorUints []*VectorRecord
+	// the type of the memSpace
+	spaceType MemSpaceType
 	// status
-	spaceStatus *MemSpaceStatus
-	// decode data todo：how to adapt multi-data type
-	decodeData *code.VectorRecord
-	// todo: currently ignore thg space limit
-	spaceLimit uint64
-	availSpace uint64
+	spaceStatus MemSpaceStatus
+	spaceLimit  uint64
+	availSpace  uint64
 	//	Certain metrics such as similarity used in vector
 	//	computations, along with metadata within the memory space.
-	computeMetric *compute.QualityMetrics
+	//computeMetric *compute.QualityMetrics
 }
 
-// ---------------------------memory operation----------------------------
+func NewMemSpace() *MemSpace {
+	return &MemSpace{
+		CreateAgentId: 0,
+		MemSpaceId:    0,
+		bindingAgents: make([]uint64, 0),
+		memUints:      make([]*MemUint, 0),
+		TempMemUnits:  make([]*TempMemUnit, 0),
+		vectorUints:   make([]*VectorRecord, 0),
+		spaceType:     Private,
+		spaceStatus:   Pending,
+		spaceLimit:    0,
+		availSpace:    0,
+		//computeMetric: &compute.QualityMetrics{},
+	}
+}
 
-func (ms *MemSpace) AddMemory(key string, data []byte) error {
+// ---------------------------Persist memory operation: I want this part focus on memory record operations----------------------------
+
+func (ms *MemSpace) PersistMemoryUint(key string, data []byte) error {
 	return nil
 }
-func (ms *MemSpace) GetMemory(key string) ([]byte, error) {
+func (ms *MemSpace) GetPersistMemoryUint(key string) ([]byte, error) {
 	return nil, nil
 }
-func (ms *MemSpace) UpdateMemory(key string, data []byte) error {
+func (ms *MemSpace) UpdatePersistMemory(key string, data []byte) error {
 	return nil
 }
-func (ms *MemSpace) DeleteMemory(key string) error {
+func (ms *MemSpace) DeletePersistMemory(key string) error {
 	return nil
 }
-func (ms *MemSpace) ListMemories() []string {
+func (ms *MemSpace) ListPersistMemories() []string {
 	return nil
 }
 
@@ -68,7 +83,6 @@ func (ms *MemSpace) BindAgent(agentID uint64) error {
 func (ms *MemSpace) UnbindAgent(agentID uint64) error {
 	return nil
 }
-
 func (ms *MemSpace) GetBoundAgents() []uint64 {
 	return ms.bindingAgents
 }
