@@ -6,21 +6,24 @@ type MemMetaData struct {
 	CreateAgentId uint64
 	// allow multi-agent binding
 	BindingAgents []uint64
-	SpaceType     *MemSpaceType
+	SpaceType     MemSpaceType
 	// status
-	SpaceStatus *MemSpaceStatus
-	SpaceLimit  uint64
-	AvailSpace  uint64
+	SpaceStatus MemSpaceStatus
+	// uint: B
+	SpaceLimit uint64
+	AvailSpace uint64
 }
 
-func NewMemMetaData() *MemMetaData {
+func NewMemMetaData(id uint64, spaceType MemSpaceType, spaceLimit uint64) *MemMetaData {
 	return &MemMetaData{
 		CreateAgentId: 0,
 		BindingAgents: make([]uint64, 0),
-		SpaceType:     nil,
-		SpaceStatus:   nil,
-		SpaceLimit:    0,
-		AvailSpace:    0,
+		SpaceType:     spaceType,
+
+		SpaceStatus: Pending,
+		SpaceLimit:  spaceLimit,
+		AvailSpace:  spaceLimit,
+		MemSpaceId:  id,
 	}
 }
 

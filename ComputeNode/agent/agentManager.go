@@ -1,5 +1,5 @@
 package agent
 
 type AgentManager struct {
-	agents []*agent
+	agents []*Agent
 }

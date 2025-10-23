@@ -42,10 +42,10 @@ func EncodeMMMeta(mm *MemMetaData) []byte {
 	}
 
 	// 存储 spaceType（变长编码）
-	index += binary.PutVarint(buf[index:], int64(*mm.SpaceType))
+	index += binary.PutVarint(buf[index:], int64(mm.SpaceType))
 
 	// 存储 spaceStatus（变长编码）
-	index += binary.PutVarint(buf[index:], int64(*mm.SpaceStatus))
+	index += binary.PutVarint(buf[index:], int64(mm.SpaceStatus))
 
 	// 存储 spaceLimit（变长编码）
 	index += binary.PutUvarint(buf[index:], mm.SpaceLimit)
@@ -55,4 +55,10 @@ func EncodeMMMeta(mm *MemMetaData) []byte {
 
 	// 返回实际写入的字节数据
 	return buf[:index]
+}
+
+// todo 这个结构的编码逻辑并不是非常好写
+
+func EncodeMMSpace(space *MemSpace) ([]byte, error) {
+	return []byte(""), nil
 }

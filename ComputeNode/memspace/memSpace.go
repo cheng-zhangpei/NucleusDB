@@ -36,12 +36,16 @@ type MemSpace struct {
 	spaceStatus MemSpaceStatus
 	spaceLimit  uint64
 	availSpace  uint64
+	// Memory Space description
+	description string
+
+	name string
 	//	Certain metrics such as similarity used in vector
 	//	computations, along with metadata within the memory space.
 	//computeMetric *compute.QualityMetrics
 }
 
-func NewMemSpace() *MemSpace {
+func NewMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64) *MemSpace {
 	return &MemSpace{
 		CreateAgentId: 0,
 		MemSpaceId:    0,
@@ -60,6 +64,7 @@ func NewMemSpace() *MemSpace {
 // ---------------------------Persist memory operation: I want this part focus on memory record operations----------------------------
 
 func (ms *MemSpace) PersistMemoryUint(key string, data []byte) error {
+
 	return nil
 }
 func (ms *MemSpace) GetPersistMemoryUint(key string) ([]byte, error) {

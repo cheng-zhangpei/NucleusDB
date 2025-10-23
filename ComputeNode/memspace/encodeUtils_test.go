@@ -6,14 +6,14 @@ import (
 
 func TestEncodeDecodeMMMeta(t *testing.T) {
 	// 创建测试数据
-	original := NewMemMetaData()
+	original := NewMemMetaData(1, Private, 1<<20)
 	original.MemSpaceId = 987654321 // 新增字段
 	original.CreateAgentId = 123456789
 	original.BindingAgents = []uint64{111, 222, 333, 444, 555}
 	spaceType := Shared
 	spaceStatus := Binding
-	original.SpaceType = &spaceType
-	original.SpaceStatus = &spaceStatus
+	original.SpaceType = spaceType
+	original.SpaceStatus = spaceStatus
 	original.SpaceLimit = 1024 * 1024 * 100 // 100MB
 	original.AvailSpace = 1024 * 1024 * 75  // 75MB
 
@@ -43,8 +43,8 @@ func TestEncodeDecodeMMMeta(t *testing.T) {
 		t.Logf("MemSpaceId: %d", decoded.MemSpaceId) // 新增日志
 		t.Logf("CreateAgentId: %d", decoded.CreateAgentId)
 		t.Logf("BindingAgents: %v", decoded.BindingAgents)
-		t.Logf("SpaceType: %v", *decoded.SpaceType)
-		t.Logf("SpaceStatus: %v", *decoded.SpaceStatus)
+		t.Logf("SpaceType: %v", decoded.SpaceType)
+		t.Logf("SpaceStatus: %v", decoded.SpaceStatus)
 		t.Logf("SpaceLimit: %d", decoded.SpaceLimit)
 		t.Logf("AvailSpace: %d", decoded.AvailSpace)
 	})
@@ -56,12 +56,12 @@ func TestEncodeDecodeMMMeta(t *testing.T) {
 
 		for _, spaceType := range spaceTypes {
 			for _, spaceStatus := range spaceStatuses {
-				testData := NewMemMetaData()
+				testData := NewMemMetaData(1, Private, 1<<20)
 				testData.MemSpaceId = uint64(spaceType)*10000 + uint64(spaceStatus) // 使用新字段
 				testData.CreateAgentId = uint64(spaceType)*1000 + uint64(spaceStatus)
 				testData.BindingAgents = []uint64{1, 2, 3}
-				testData.SpaceType = &spaceType
-				testData.SpaceStatus = &spaceStatus
+				testData.SpaceType = spaceType
+				testData.SpaceStatus = spaceStatus
 				testData.SpaceLimit = 1000
 				testData.AvailSpace = 500
 

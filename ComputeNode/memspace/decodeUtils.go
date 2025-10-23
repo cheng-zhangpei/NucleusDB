@@ -22,7 +22,15 @@ func DecodeMMMetaList(data [][]byte) ([]*MemMetaData, error) {
 	return metaData, nil
 }
 func DecodeMMMeta(data []byte) (*MemMetaData, error) {
-	mm := NewMemMetaData()
+	mm := &MemMetaData{
+		0,
+		0,
+		nil,
+		Private,
+		Pending,
+		0,
+		0,
+	}
 	index := 0
 
 	// 读取 MemSpaceId
@@ -61,10 +69,8 @@ func DecodeMMMeta(data []byte) (*MemMetaData, error) {
 	if bytesRead <= 0 {
 		return nil, fmt.Errorf("failed to read spaceType")
 	}
-	if mm.SpaceType == nil {
-		mm.SpaceType = new(MemSpaceType)
-	}
-	*mm.SpaceType = MemSpaceType(spaceTypeVal)
+	mm.SpaceType = MemSpaceType(spaceTypeVal)
+
 	index += bytesRead
 
 	// 读取 spaceStatus
@@ -72,10 +78,8 @@ func DecodeMMMeta(data []byte) (*MemMetaData, error) {
 	if bytesRead <= 0 {
 		return nil, fmt.Errorf("failed to read spaceStatus")
 	}
-	if mm.SpaceStatus == nil {
-		mm.SpaceStatus = new(MemSpaceStatus)
-	}
-	*mm.SpaceStatus = MemSpaceStatus(spaceStatusVal)
+
+	mm.SpaceStatus = MemSpaceStatus(spaceStatusVal)
 	index += bytesRead
 
 	// 读取 spaceLimit
@@ -96,3 +100,8 @@ func DecodeMMMeta(data []byte) (*MemMetaData, error) {
 
 	return mm, nil
 }
+
+//func DecodeMMSpace([]byte metaMmspace) (*MemSpace,error) {
+//
+//	return nil,nil
+//}
