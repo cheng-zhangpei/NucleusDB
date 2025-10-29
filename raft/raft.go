@@ -152,7 +152,7 @@ type raft struct {
 
 	txnContent [][]byte
 
-	// NTP client 授时客户端
+	// NTP dbClient 授时客户端
 	NTPClient *ntpservice.NtpClient
 }
 

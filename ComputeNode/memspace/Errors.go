@@ -1,4 +1,4 @@
-package ComputeNode
+package memspace
 
 import "errors"
 

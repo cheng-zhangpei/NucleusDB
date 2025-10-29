@@ -8,6 +8,15 @@ const (
 	Shared
 )
 
+type MemSpaceContentType int
+
+const (
+	ToolMemory       MemSpaceContentType = iota // 工具使用记忆（函数调用、API使用记录）
+	ContentMemory                               // 内容记忆（对话、文档、知识）
+	BehavioralMemory                            // 行为模式记忆（决策逻辑、最佳实践）
+	EpisodicMemory                              // 情景记忆（具体事件、会话记录）)
+)
+
 // MemSpaceStatus the status of the memsapce
 type MemSpaceStatus int
 
@@ -39,24 +48,27 @@ type MemSpace struct {
 	// Memory Space description
 	description string
 
-	name string
+	name                string
+	memSpaceContentType MemSpaceContentType
 	//	Certain metrics such as similarity used in vector
 	//	computations, along with metadata within the memory space.
 	//computeMetric *compute.QualityMetrics
 }
 
-func NewMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64) *MemSpace {
+func NewMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64, memSpaceContentType MemSpaceContentType) *MemSpace {
+
 	return &MemSpace{
-		CreateAgentId: 0,
-		MemSpaceId:    0,
-		bindingAgents: make([]uint64, 0),
-		memUints:      make([]*MemUint, 0),
-		TempMemUnits:  make([]*TempMemUnit, 0),
-		vectorUints:   make([]*VectorRecord, 0),
-		spaceType:     Private,
-		spaceStatus:   Pending,
-		spaceLimit:    0,
-		availSpace:    0,
+		CreateAgentId:       0,
+		MemSpaceId:          id,
+		bindingAgents:       make([]uint64, 0),
+		memUints:            make([]*MemUint, 0),
+		TempMemUnits:        make([]*TempMemUnit, 0),
+		vectorUints:         make([]*VectorRecord, 0),
+		spaceType:           spaceType,
+		spaceStatus:         Pending,
+		spaceLimit:          spaceLimit,
+		availSpace:          0,
+		memSpaceContentType: memSpaceContentType,
 		//computeMetric: &compute.QualityMetrics{},
 	}
 }

@@ -993,7 +993,7 @@ func NewRaftClient(addresses []string, serverAddr string) []*RaftClient {
 			conn: conn,
 			rpc:  rpcClient,
 		})
-		log.Printf("start an peer client for %s\n", addr)
+		log.Printf("start an peer dbClient for %s\n", addr)
 	}
 	return clients
 }

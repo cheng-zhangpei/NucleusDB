@@ -1,4 +1,4 @@
-package client
+package dbClient
 
 type Client interface {
 	// Update :transaction operation in the database

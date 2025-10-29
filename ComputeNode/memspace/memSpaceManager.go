@@ -1,19 +1,18 @@
 package memspace
 
 import (
-	"ComputeNode/client"
 	"fmt"
 )
 
 type MemSpaceManager struct {
-	// storage client
-	dbClient *client.NucleusClient
+	// storage dbClient
+	dbClient *NucleusClient
 	// private memspace
-	privateTable map[string]*MemSpace
+	privateTable map[uint64]*MemSpace
 	// share memsapce
-	publicTable map[string]*MemSpace
+	publicTable map[uint64]*MemSpace
 	// meta space:
-	metaTable []*MemMetaData
+	metaTable map[uint64]*MemMetaData
 	// path - 1, private table key
 	privatePath string
 	// path - 2, meta data path
@@ -22,21 +21,26 @@ type MemSpaceManager struct {
 	sharedPath string
 }
 
-func NewMemSpaceManager(dbClient *client.NucleusClient, privatePath string,
+func NewMemSpaceManager(dbClient *NucleusClient, privatePath string,
 	metaPath string, sharedPath string) (*MemSpaceManager, error) {
 	// 这两个表是惰性加载的
-	privateTable := make(map[string]*MemSpace)
-	publicTable := make(map[string]*MemSpace)
+	privateTable := make(map[uint64]*MemSpace)
+	publicTable := make(map[uint64]*MemSpace)
 	list, err := dbClient.DistributePrefixList([]byte(metaPath))
+	metaTable := make(map[uint64]*MemMetaData)
 	if err != nil {
 		return nil, err
 	}
 	metaList, err := DecodeMMMetaList(list)
+	for _, meta := range metaList {
+		metaTable[meta.MemSpaceId] = meta
+	}
+
 	return &MemSpaceManager{
 		privateTable: privateTable,
 		publicTable:  publicTable,
 		dbClient:     dbClient,
-		metaTable:    metaList,
+		metaTable:    metaTable,
 		privatePath:  privatePath,
 		metaPath:     metaPath,
 		sharedPath:   sharedPath,
@@ -45,29 +49,28 @@ func NewMemSpaceManager(dbClient *client.NucleusClient, privatePath string,
 
 // =========================================memory space operation===========================================
 // registerMemSpace
-func (msm *MemSpaceManager) registerMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64) error {
-	// 创建元数据并持久化（与下面的内容要放到事务中中操作）
+func (msm *MemSpaceManager) registerMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64, memSpaceContentType MemSpaceContentType) error {
+	// 保存元数据
 	metaData := NewMemMetaData(id, spaceType, spaceLimit)
-	msm.metaTable = append(msm.metaTable, metaData)
+	msm.metaTable[id] = metaData
 	metaKey := fmt.Sprintf("%s/%d", msm.metaPath, id)
-	mmSpace := NewMemSpace(id, spaceType, spaceLimit)
+	mmSpace := NewMemSpace(id, spaceType, spaceLimit, memSpaceContentType)
 	var path string
 	if spaceType == Private {
-		path = fmt.Sprintf("%s/%d", msm.privatePath, id)
-		msm.privateTable[path] = mmSpace
+		msm.privateTable[id] = mmSpace
 	}
 	if spaceType == Shared {
-		path = fmt.Sprintf("%s/%d", msm.sharedPath, id)
-		msm.publicTable[path] = mmSpace
+		msm.publicTable[id] = mmSpace
 	}
 	// 元数据持久化
 	metaByte := EncodeMMMeta(metaData)
-	err := msm.dbClient.TxnPut([]byte(metaKey), metaByte)
+	// 记忆空间持久化
+	spaceByte, err := EncodeMMSpace(mmSpace)
 	if err != nil {
 		return err
 	}
-	// 记忆空间持久化
-	spaceByte, err := EncodeMMSpace(mmSpace)
+
+	err = msm.dbClient.TxnPut([]byte(metaKey), metaByte)
 	if err != nil {
 		return err
 	}
@@ -82,12 +85,76 @@ func (msm *MemSpaceManager) registerMemSpace(id uint64, spaceType MemSpaceType, 
 	return nil
 }
 
-// todo 在完善了MemSpace的计算细节之后再进行补充
 func (msm *MemSpaceManager) loadMemSpace(mmId uint64) error {
-
+	// 先找这个id是否在元数据中
+	meta, exist := msm.metaTable[mmId]
+	if !exist {
+		return ErrMetaNotExist
+	}
+	// 通过meta的值来找将
+	id := meta.MemSpaceId
+	spaceType := meta.SpaceType
+	var path string
+	switch spaceType {
+	case Private:
+		path = fmt.Sprintf("%s/%d", msm.privatePath, id)
+	case Shared:
+		path = fmt.Sprintf("%s/%d", msm.sharedPath, id)
+	default:
+		return ErrMetaSpaceType
+	}
+	// 去查找数据
+	memSpaceByte, err := msm.dbClient.DistributeGet([]byte(path))
+	if err != nil {
+		return err
+	}
+	msp, err := DecodeMMSpace(memSpaceByte)
+	if err != nil {
+		return err
+	}
+	// 将数据放入索引表中
+	if msp.spaceType == Private {
+		msm.privateTable[mmId] = msp
+	} else if msp.spaceType == Shared {
+		msm.publicTable[mmId] = msp
+	}
 	return nil
 }
 
-func (msm *MemSpaceManager) clearMemSpace() error {
+// clearMemSpace clear a specific memspace
+func (msm *MemSpaceManager) clearMemSpace(mmId uint64) error {
+	_, exist := msm.privateTable[mmId]
+	if !exist {
+		return ErrMemSpaceNotExist
+	} else {
+		msm.privateTable[mmId] = nil
+	}
+	pms, exist := msm.publicTable[mmId]
+	if !exist {
+		return ErrMemSpaceNotExist
+	} else {
+		// when the no agent binding in the memorySpace
+		if len(pms.bindingAgents) == 0 {
+			msm.publicTable[mmId] = nil
+		}
+	}
 	return nil
+}
+
+// FindBehavioralMemory called by agent, to find binding BehavioralMemory
+func (msm *MemSpaceManager) FindBehavioralMemory(agentId uint64) ([]*MemSpace, error) {
+
+	return nil, nil
+}
+
+// FindContentMemory called by agent, to find binding ContentMemory
+func (msm *MemSpaceManager) FindContentMemory(agentId uint64) ([]*MemSpace, error) {
+
+	return nil, nil
+}
+
+// FindToolMemory called by agent, to find binding ToolMemory
+func (msm *MemSpaceManager) FindToolMemory(agentId uint64) ([]*MemSpace, error) {
+
+	return nil, nil
 }

@@ -1,4 +1,4 @@
-package client
+package dbClient
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -52,14 +52,14 @@ func TestNucleusDBRaftPut(t *testing.T) {
 	err = client.DistributePut(testKey3, testValue3)
 	assert.NoError(t, err)
 
-	//get, err := client.DistributeGet(testKey1)
+	//get, err := dbClient.DistributeGet(testKey1)
 	//assert.NoError(t, err)
 	////println("first")
 	//println(string(get))
 	//assert.Equal(t, testValue1, get)
-	//err = client.DistributeDelete(testKey1)
+	//err = dbClient.DistributeDelete(testKey1)
 	//assert.NoError(t, err)
-	//get, err := client.DistributeGet(testKey1)
+	//get, err := dbClient.DistributeGet(testKey1)
 	//assert.NoError(t, err)
 	//log.Println(get)
 }
@@ -103,14 +103,14 @@ func TestNucleusDBRaftDelete(t *testing.T) {
 	err = client.DistributeDelete(testKey3)
 	assert.NoError(t, err)
 
-	//get, err := client.DistributeGet(testKey1)
+	//get, err := dbClient.DistributeGet(testKey1)
 	//assert.NoError(t, err)
 	////println("first")
 	//println(string(get))
 	//assert.Equal(t, testValue1, get)
-	//err = client.DistributeDelete(testKey1)
+	//err = dbClient.DistributeDelete(testKey1)
 	//assert.NoError(t, err)
-	//get, err := client.DistributeGet(testKey1)
+	//get, err := dbClient.DistributeGet(testKey1)
 	//assert.NoError(t, err)
 	//log.Println(get)
 }

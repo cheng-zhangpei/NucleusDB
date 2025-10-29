@@ -1,4 +1,4 @@
-package client
+package dbClient
 
 import (
 	"ComputeNode"
@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// NucleusClient us client to connect with nucleusDB
+// NucleusClient us dbClient to connect with nucleusDB
 type NucleusClient struct {
 	HttpServer string
 	raftId     int

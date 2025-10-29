@@ -9,6 +9,8 @@ type Agent struct {
 	privateMemSpaceKeys []string
 	sharedMemSpaceKeys  []string
 	mmManager           *memspace.MemSpaceManager
+	// todo 目前的思维是，每一个记忆空间必须有一个独属的会话空间
+	privateMm *memspace.MemSpace
 }
 
 func NewAgent(agentId uint64, httpAddr string, mmManager *memspace.MemSpaceManager) *Agent {
@@ -40,5 +42,10 @@ func (ag *Agent) SpecifyOutput(specifyMMKey []string) string {
 
 // SendMessage2LLMServer Send the prompt to the large model service
 func (ag *Agent) SendMessage2LLMServer() {
+
+}
+
+// GetMyMemorySpaceAbstract call by agent
+func (ag *Agent) GetMyMemorySpaceAbstract() {
 
 }

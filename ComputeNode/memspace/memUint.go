@@ -20,22 +20,29 @@ type MemUint struct {
 	key       []byte
 	value     []byte
 	unitType  ComputeType
-	timestamp time.Time
-	// todo 后续应该会根据组织形式修改单个元素的布局
+	timestamp uint64
 }
 type TempMemUnit struct {
 	// the content of the temp conversation
 	value string
 	//the timestamp of the content
-	timestamp time.Time
+	timestamp uint64
 }
 
 func NewMemUint(key []byte, value []byte, unitType ComputeType) *MemUint {
+	now := time.Now()
 	return &MemUint{
 		key:       key,
 		value:     value,
 		unitType:  unitType,
-		timestamp: time.Now(),
+		timestamp: uint64(now.UnixMilli()),
+	}
+}
+func NewTempMemUint(value []byte) *MemUint {
+	now := time.Now()
+	return &MemUint{
+		value:     value,
+		timestamp: uint64(now.UnixMilli()),
 	}
 }
 
@@ -47,7 +54,7 @@ func (mu *MemUint) GetMemoryValue() string {
 // convert translate tempUint to MemUint,path is the key of the memspace its belong to
 func (tmu *TempMemUnit) convert(path string, computeType ComputeType) *MemUint {
 	t := time.Now()
-	milliTimestamp := t.UnixMilli()
+	milliTimestamp := uint64(t.UnixMilli())
 	key := fmt.Sprintf("%s/%d", path, milliTimestamp)
 	memUint := NewMemUint([]byte(key), []byte(tmu.value), computeType)
 	return memUint
