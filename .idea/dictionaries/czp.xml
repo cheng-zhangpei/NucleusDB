@@ -2,6 +2,7 @@
   <dictionary name="czp">
     <words>
       <w>coordinatorserveraddr</w>
+      <w>memspace</w>
     </words>
   </dictionary>
 </component>

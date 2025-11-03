@@ -6,10 +6,6 @@ import (
 )
 
 // vector encoder
-func encodeVector(memUint MemUint) *VectorRecord {
-	return NewVectorRecord()
-
-}
 
 func EncodeMMMeta(mm *MemMetaData) []byte {
 	// 计算 bindingAgents 的长度

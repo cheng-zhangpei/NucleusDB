@@ -1,10 +1,14 @@
 package memspace
 
-// 这个玩意需要如何定义呢？
+// VectorRecord vector data define
 type VectorRecord struct {
 	agentId uint64
+	data    []float32
 }
 
-func NewVectorRecord() *VectorRecord {
-	return &VectorRecord{}
+func NewVectorRecord(agentId uint64, data []float32) *VectorRecord {
+	return &VectorRecord{
+		agentId: agentId,
+		data:    data,
+	}
 }
