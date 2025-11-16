@@ -115,13 +115,6 @@ func DecodeMMSpace(data []byte) (*MemSpace, error) {
 
 	index := 0
 
-	// 读取 CreateAgentId
-	if index+8 > len(data) {
-		return nil, fmt.Errorf("insufficient data for CreateAgentId")
-	}
-	space.CreateAgentId = binary.LittleEndian.Uint64(data[index : index+8])
-	index += 8
-
 	// 读取 MemSpaceId
 	if index+8 > len(data) {
 		return nil, fmt.Errorf("insufficient data for MemSpaceId")

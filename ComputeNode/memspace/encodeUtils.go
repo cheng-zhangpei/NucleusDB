@@ -91,13 +91,6 @@ func EncodeMMSpace(space *MemSpace) ([]byte, error) {
 	buf := make([]byte, bufSize)
 	index := 0
 
-	// 存储 CreateAgentId (8字节，小端存储)
-	if index+8 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at CreateAgentId")
-	}
-	binary.LittleEndian.PutUint64(buf[index:index+8], space.CreateAgentId)
-	index += 8
-
 	// 存储 MemSpaceId (8字节，小端存储)
 	if index+8 > len(buf) {
 		return nil, fmt.Errorf("buffer overflow at MemSpaceId")
