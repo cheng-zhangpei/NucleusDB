@@ -10,7 +10,7 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 	original := &MemSpace{
 		CreateAgentId: 123456789,
 		MemSpaceId:    987654321,
-		bindingAgents: []uint64{111, 222, 333, 444, 555},
+		BindingAgents: []uint64{111, 222, 333, 444, 555},
 		memUints: []*MemUint{
 			{
 				key:       []byte("test_key_1"),
@@ -65,12 +65,12 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		}
 
 		// 验证 bindingAgents
-		if len(decoded.bindingAgents) != len(original.bindingAgents) {
-			t.Errorf("BindingAgents length mismatch: got %d, want %d", len(decoded.bindingAgents), len(original.bindingAgents))
+		if len(decoded.BindingAgents) != len(original.BindingAgents) {
+			t.Errorf("BindingAgents length mismatch: got %d, want %d", len(decoded.BindingAgents), len(original.BindingAgents))
 		} else {
-			for i, agentId := range original.bindingAgents {
-				if decoded.bindingAgents[i] != agentId {
-					t.Errorf("BindingAgents[%d] mismatch: got %d, want %d", i, decoded.bindingAgents[i], agentId)
+			for i, agentId := range original.BindingAgents {
+				if decoded.BindingAgents[i] != agentId {
+					t.Errorf("BindingAgents[%d] mismatch: got %d, want %d", i, decoded.BindingAgents[i], agentId)
 				}
 			}
 		}
@@ -137,7 +137,7 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		t.Logf("Test passed: all fields match")
 		t.Logf("CreateAgentId: %d", decoded.CreateAgentId)
 		t.Logf("MemSpaceId: %d", decoded.MemSpaceId)
-		t.Logf("BindingAgents: %v", decoded.bindingAgents)
+		t.Logf("BindingAgents: %v", decoded.BindingAgents)
 		t.Logf("MemUints count: %d", len(decoded.memUints))
 		t.Logf("SpaceType: %v", decoded.spaceType)
 		t.Logf("SpaceStatus: %v", decoded.spaceStatus)
@@ -152,7 +152,7 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		emptySpace := &MemSpace{
 			CreateAgentId:       0,
 			MemSpaceId:          0,
-			bindingAgents:       []uint64{},
+			BindingAgents:       []uint64{},
 			memUints:            []*MemUint{},
 			TempMemUnits:        []*TempMemUnit{},
 			vectorUints:         []*VectorRecord{},
@@ -177,7 +177,7 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 
 		// 验证空值
 		if decoded.CreateAgentId != 0 || decoded.MemSpaceId != 0 ||
-			len(decoded.bindingAgents) != 0 || len(decoded.memUints) != 0 ||
+			len(decoded.BindingAgents) != 0 || len(decoded.memUints) != 0 ||
 			decoded.spaceType != Private || decoded.spaceStatus != Pending ||
 			decoded.spaceLimit != 0 || decoded.availSpace != 0 ||
 			decoded.description != "" || decoded.name != "" ||
@@ -199,7 +199,7 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 					testData := &MemSpace{
 						CreateAgentId:       uint64(spaceType)*1000 + uint64(spaceStatus),
 						MemSpaceId:          uint64(spaceType)*10000 + uint64(spaceStatus),
-						bindingAgents:       []uint64{1, 2, 3},
+						BindingAgents:       []uint64{1, 2, 3},
 						memUints:            []*MemUint{},
 						TempMemUnits:        []*TempMemUnit{},
 						vectorUints:         []*VectorRecord{},
@@ -250,7 +250,7 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		largeSpace := &MemSpace{
 			CreateAgentId:       999,
 			MemSpaceId:          888,
-			bindingAgents:       make([]uint64, 1000),
+			BindingAgents:       make([]uint64, 1000),
 			memUints:            make([]*MemUint, 100),
 			spaceType:           Shared,
 			spaceStatus:         Binding,
@@ -262,8 +262,8 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		}
 
 		// 填充 bindingAgents
-		for i := range largeSpace.bindingAgents {
-			largeSpace.bindingAgents[i] = uint64(i)
+		for i := range largeSpace.BindingAgents {
+			largeSpace.BindingAgents[i] = uint64(i)
 		}
 
 		// 填充 memUints
@@ -292,9 +292,9 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		}
 
 		// 基本验证
-		if len(decoded.bindingAgents) != len(largeSpace.bindingAgents) {
+		if len(decoded.BindingAgents) != len(largeSpace.BindingAgents) {
 			t.Errorf("Large space bindingAgents length mismatch: got %d, want %d",
-				len(decoded.bindingAgents), len(largeSpace.bindingAgents))
+				len(decoded.BindingAgents), len(largeSpace.BindingAgents))
 		}
 
 		if len(decoded.memUints) != len(largeSpace.memUints) {

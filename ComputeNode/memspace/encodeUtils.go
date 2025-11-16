@@ -55,7 +55,7 @@ func EncodeMMMeta(mm *MemMetaData) []byte {
 }
 func EncodeMMSpace(space *MemSpace) ([]byte, error) {
 	// 计算 bindingAgents 的长度
-	bindingAgentsSize := len(space.bindingAgents)
+	bindingAgentsSize := len(space.BindingAgents)
 
 	// 计算 memUints 的长度
 	memUintsSize := len(space.memUints)
@@ -113,7 +113,7 @@ func EncodeMMSpace(space *MemSpace) ([]byte, error) {
 	index += 8
 
 	// 存储 bindingAgents 中的每个 agent ID (8字节，小端存储)
-	for _, agentId := range space.bindingAgents {
+	for _, agentId := range space.BindingAgents {
 		if index+8 > len(buf) {
 			return nil, fmt.Errorf("buffer overflow at bindingAgents data")
 		}

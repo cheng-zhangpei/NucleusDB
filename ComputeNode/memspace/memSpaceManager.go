@@ -8,9 +8,9 @@ type MemSpaceManager struct {
 	// storage dbClient
 	dbClient *NucleusClient
 	// private memspace
-	privateTable map[uint64]*MemSpace
+	PrivateTable map[uint64]*MemSpace
 	// share memsapce
-	publicTable map[uint64]*MemSpace
+	PublicTable map[uint64]*MemSpace
 	// meta space:
 	metaTable map[uint64]*MemMetaData
 	// path - 1, private table key
@@ -37,8 +37,8 @@ func NewMemSpaceManager(dbClient *NucleusClient, privatePath string,
 	}
 
 	return &MemSpaceManager{
-		privateTable: privateTable,
-		publicTable:  publicTable,
+		PrivateTable: privateTable,
+		PublicTable:  publicTable,
 		dbClient:     dbClient,
 		metaTable:    metaTable,
 		privatePath:  privatePath,
@@ -48,8 +48,8 @@ func NewMemSpaceManager(dbClient *NucleusClient, privatePath string,
 }
 
 // =========================================memory space operation===========================================
-// registerMemSpace
-func (msm *MemSpaceManager) registerMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64,
+// RegisterMemSpace
+func (msm *MemSpaceManager) RegisterMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64,
 	memSpaceContentType MemSpaceContentType, embeddingClientAddr string) error {
 	// 保存元数据
 	metaData := NewMemMetaData(id, spaceType, spaceLimit)
@@ -58,10 +58,10 @@ func (msm *MemSpaceManager) registerMemSpace(id uint64, spaceType MemSpaceType, 
 	mmSpace := NewMemSpace(id, spaceType, spaceLimit, memSpaceContentType, embeddingClientAddr)
 	var path string
 	if spaceType == Private {
-		msm.privateTable[id] = mmSpace
+		msm.PrivateTable[id] = mmSpace
 	}
 	if spaceType == Shared {
-		msm.publicTable[id] = mmSpace
+		msm.PublicTable[id] = mmSpace
 	}
 	// 元数据持久化
 	metaByte := EncodeMMMeta(metaData)
@@ -115,28 +115,28 @@ func (msm *MemSpaceManager) loadMemSpace(mmId uint64) error {
 	}
 	// 将数据放入索引表中
 	if msp.spaceType == Private {
-		msm.privateTable[mmId] = msp
+		msm.PrivateTable[mmId] = msp
 	} else if msp.spaceType == Shared {
-		msm.publicTable[mmId] = msp
+		msm.PublicTable[mmId] = msp
 	}
 	return nil
 }
 
 // clearMemSpace clear a specific memspace
 func (msm *MemSpaceManager) clearMemSpace(mmId uint64) error {
-	_, exist := msm.privateTable[mmId]
+	_, exist := msm.PrivateTable[mmId]
 	if !exist {
 		return ErrMemSpaceNotExist
 	} else {
-		msm.privateTable[mmId] = nil
+		msm.PrivateTable[mmId] = nil
 	}
-	pms, exist := msm.publicTable[mmId]
+	pms, exist := msm.PublicTable[mmId]
 	if !exist {
 		return ErrMemSpaceNotExist
 	} else {
 		// when the no agent binding in the memorySpace
-		if len(pms.bindingAgents) == 0 {
-			msm.publicTable[mmId] = nil
+		if len(pms.BindingAgents) == 0 {
+			msm.PublicTable[mmId] = nil
 		}
 	}
 	return nil
@@ -158,4 +158,27 @@ func (msm *MemSpaceManager) FindContentMemory(agentId uint64) ([]*MemSpace, erro
 func (msm *MemSpaceManager) FindToolMemory(agentId uint64) ([]*MemSpace, error) {
 
 	return nil, nil
+}
+
+// CanBindingPrivate  if the memId existed in the privateMem or sharedMem
+func (msm *MemSpaceManager) CanBindingPrivate(id uint64) bool {
+	pms, exist := msm.PrivateTable[id]
+	if !exist {
+		return false
+	} else {
+		// if the private memspace is pending?
+		if len(pms.BindingAgents) != 0 {
+			return false
+		}
+		return true
+	}
+}
+
+// CanBindingPublic if can bind a shared memspace
+func (msm *MemSpaceManager) CanBindingPublic(id uint64) bool {
+	_, exist := msm.PublicTable[id]
+	if !exist {
+		return false
+	}
+	return true
 }

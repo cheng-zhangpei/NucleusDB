@@ -13,7 +13,7 @@ func TestMemSpaceManager(t *testing.T) {
 	manager, err := NewMemSpaceManager(client, privatePath, publicPath, metaPath)
 	assert.NoError(t, err)
 	// 测试加载数据
-	err = manager.registerMemSpace(1, Private, 10000, ContentMemory, "http://localhost:5000")
+	err = manager.RegisterMemSpace(1, Private, 10000, ContentMemory, "http://localhost:5000")
 	assert.NoError(t, err)
 
 	err = manager.loadMemSpace(1)

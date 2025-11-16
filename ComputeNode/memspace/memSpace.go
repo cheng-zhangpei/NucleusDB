@@ -34,11 +34,10 @@ const (
 )
 
 type MemSpace struct {
-	CreateAgentId uint64
 	// MemSpaceId can not repeat in a system
 	MemSpaceId uint64
 	// allow multi-agent binding
-	bindingAgents []uint64
+	BindingAgents []uint64
 	// persistent memory uint layout
 	memUints []*MemUint
 	// content of temp conversation
@@ -67,9 +66,8 @@ func NewMemSpace(id uint64, spaceType MemSpaceType,
 	embeddingServerAddr string) *MemSpace {
 	embeddingClient := NewEmbeddingServerClient(embeddingServerAddr)
 	return &MemSpace{
-		CreateAgentId:       0,
 		MemSpaceId:          id,
-		bindingAgents:       make([]uint64, 0),
+		BindingAgents:       make([]uint64, 0),
 		memUints:            make([]*MemUint, 0),
 		TempMemUnits:        make([]*TempMemUnit, 0),
 		vectorUints:         make([]*VectorRecord, 0),
@@ -80,6 +78,7 @@ func NewMemSpace(id uint64, spaceType MemSpaceType,
 		memSpaceContentType: memSpaceContentType,
 		//computeMetric: &compute.QualityMetrics{},
 		embeddingServerClient: embeddingClient,
+		// todo 这里需要加一个锁，等到多智能体协同的时候还是需要注意的
 	}
 }
 
@@ -111,7 +110,7 @@ func (ms *MemSpace) UnbindAgent(agentID uint64) error {
 	return nil
 }
 func (ms *MemSpace) GetBoundAgents() []uint64 {
-	return ms.bindingAgents
+	return ms.BindingAgents
 }
 func (ms *MemSpace) IsAgentBound(agentID uint64) bool {
 	return false
@@ -217,7 +216,7 @@ func (ms *MemSpace) embedding(content string) (*VectorRecord, error) {
 
 	// 创建向量记录
 	vectorRecord := &VectorRecord{
-		agentId: ms.CreateAgentId,
+		agentId: ms.BindingAgents[0],
 		data:    vector,
 	}
 
@@ -476,7 +475,7 @@ func (ms *MemSpace) BatchEmbedding(contents []string) ([]*VectorRecord, error) {
 	var records []*VectorRecord
 	for _, embedding := range embeddings {
 		record := &VectorRecord{
-			agentId: ms.CreateAgentId,
+			agentId: ms.BindingAgents[0],
 			data:    embedding,
 		}
 		records = append(records, record)

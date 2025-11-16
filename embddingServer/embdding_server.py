@@ -25,9 +25,8 @@ class AliEmbeddingServer:
         """Initialize Alibaba Cloud client"""
         try:
             # Get API Key from environment variable
-            api_key = "sk-2b3e4f939b734798977081f73b83ad2f"
             base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-
+            api_key = os.getenv("EMBEDDINGCLIENT", "")
             self.client = OpenAI(
                 api_key=api_key,
                 base_url=base_url
@@ -56,7 +55,6 @@ class AliEmbeddingServer:
                 input=texts,
                 dimensions=dimensions
             )
-
             processing_time = time.time() - start_time
             logger.info(f"Embedding generation completed, time taken: {processing_time:.2f} seconds")
 
@@ -240,7 +238,7 @@ if __name__ == '__main__':
     logger.info("🚀 Starting Alibaba Cloud embedding service...")
     app.run(
         host='0.0.0.0',
-        port=5000,
+        port=20002,
         debug=False,
         threaded=True
     )

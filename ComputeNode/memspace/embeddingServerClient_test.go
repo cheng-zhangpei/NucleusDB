@@ -10,7 +10,7 @@ import (
 // TestEmbeddingClient 测试嵌入客户端
 func TestEmbeddingClient(t *testing.T) {
 	// 创建客户端
-	client := NewEmbeddingServerClient("http://localhost:5000")
+	client := NewEmbeddingServerClient("http://localhost:20002")
 
 	fmt.Println("🧪 Starting Embedding Client Tests...")
 	fmt.Println("=======================================")

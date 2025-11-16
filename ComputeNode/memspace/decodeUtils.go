@@ -107,7 +107,7 @@ func DecodeMMSpace(data []byte) (*MemSpace, error) {
 	}
 
 	space := &MemSpace{
-		bindingAgents: make([]uint64, 0),
+		BindingAgents: make([]uint64, 0),
 		memUints:      make([]*MemUint, 0),
 		TempMemUnits:  make([]*TempMemUnit, 0),  // 不编码，初始化为空
 		vectorUints:   make([]*VectorRecord, 0), // 不编码，初始化为空
@@ -140,9 +140,9 @@ func DecodeMMSpace(data []byte) (*MemSpace, error) {
 	if index+bindingAgentsSize*8 > len(data) {
 		return nil, fmt.Errorf("insufficient data for bindingAgents")
 	}
-	space.bindingAgents = make([]uint64, bindingAgentsSize)
+	space.BindingAgents = make([]uint64, bindingAgentsSize)
 	for i := 0; i < bindingAgentsSize; i++ {
-		space.bindingAgents[i] = binary.LittleEndian.Uint64(data[index : index+8])
+		space.BindingAgents[i] = binary.LittleEndian.Uint64(data[index : index+8])
 		index += 8
 	}
 

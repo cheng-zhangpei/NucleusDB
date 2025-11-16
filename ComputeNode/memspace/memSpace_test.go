@@ -125,7 +125,7 @@ func testMemSpaceCreation(t *testing.T) {
 
 	memSpace := &MemSpace{
 		MemSpaceId:            1,
-		bindingAgents:         make([]uint64, 0),
+		BindingAgents:         make([]uint64, 0),
 		vectorUints:           make([]*VectorRecord, 0),
 		spaceType:             Shared,
 		spaceStatus:           Pending,
@@ -501,7 +501,7 @@ func createTestMemSpace(t *testing.T, contentType MemSpaceContentType) *MemSpace
 
 	return &MemSpace{
 		MemSpaceId:            1,
-		bindingAgents:         make([]uint64, 0),
+		BindingAgents:         make([]uint64, 0),
 		vectorUints:           make([]*VectorRecord, 0),
 		spaceType:             Shared,
 		spaceStatus:           Pending,
