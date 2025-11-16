@@ -24,7 +24,6 @@ func DecodeMMMetaList(data [][]byte) ([]*MemMetaData, error) {
 func DecodeMMMeta(data []byte) (*MemMetaData, error) {
 	mm := &MemMetaData{
 		0,
-		0,
 		nil,
 		Private,
 		Pending,
@@ -38,13 +37,6 @@ func DecodeMMMeta(data []byte) (*MemMetaData, error) {
 		return nil, fmt.Errorf("insufficient data for MemSpaceId")
 	}
 	mm.MemSpaceId = binary.LittleEndian.Uint64(data[index : index+8])
-	index += 8
-
-	// 读取 CreateAgentId
-	if index+8 > len(data) {
-		return nil, fmt.Errorf("insufficient data for CreateAgentId")
-	}
-	mm.CreateAgentId = binary.LittleEndian.Uint64(data[index : index+8])
 	index += 8
 
 	// 读取 bindingAgents 的长度

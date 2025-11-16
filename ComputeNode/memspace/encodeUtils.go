@@ -24,10 +24,6 @@ func EncodeMMMeta(mm *MemMetaData) []byte {
 	binary.LittleEndian.PutUint64(buf[index:index+8], mm.MemSpaceId)
 	index += 8
 
-	// 存储 CreateAgentId (8字节，小端存储)
-	binary.LittleEndian.PutUint64(buf[index:index+8], mm.CreateAgentId)
-	index += 8
-
 	// 存储 bindingAgents 的长度 (8字节，小端存储)
 	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(bindingAgentsSize))
 	index += 8
