@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"time"
 )
 
 // MemSpaceType the type pf the memspace
@@ -59,39 +61,122 @@ type MemSpace struct {
 	//	computations, along with metadata within the memory space.
 	//computeMetric *compute.QualityMetrics
 	embeddingServerClient *EmbeddingServerClient
+	stopFlush             chan struct{} // the chan to notify goroutine when to stop
+	flushTime             int
+	mu                    *sync.RWMutex
+	tempIndexPtr          uint64 // the latest/update position of the temp memory space
+	tempSpaceSize         uint64 // indicate the size of the temp memSpace
 }
 
 func NewMemSpace(id uint64, spaceType MemSpaceType,
 	spaceLimit uint64, memSpaceContentType MemSpaceContentType,
-	embeddingServerAddr string) *MemSpace {
+	embeddingServerAddr string, flushTime int, tempMemoSize uint64) *MemSpace {
 	embeddingClient := NewEmbeddingServerClient(embeddingServerAddr)
-	return &MemSpace{
-		MemSpaceId:          id,
+	ms := &MemSpace{
+		MemSpaceId: id,
+		// todo 这些空间的大小限制还没有作
 		BindingAgents:       make([]uint64, 0),
 		memUints:            make([]*MemUint, 0),
-		TempMemUnits:        make([]*TempMemUnit, 0),
+		TempMemUnits:        make([]*TempMemUnit, tempMemoSize),
 		vectorUints:         make([]*VectorRecord, 0),
 		spaceType:           spaceType,
 		spaceStatus:         Pending,
 		spaceLimit:          spaceLimit,
 		availSpace:          0,
 		memSpaceContentType: memSpaceContentType,
+		stopFlush:           make(chan struct{}),
 		//computeMetric: &compute.QualityMetrics{},
 		embeddingServerClient: embeddingClient,
-		// todo 这里需要加一个锁，等到多智能体协同的时候还是需要注意的
+		flushTime:             flushTime,
+		mu:                    new(sync.RWMutex),
+		tempIndexPtr:          0,
+		tempSpaceSize:         tempMemoSize,
 	}
+
+	go ms.startFlushRoutine(ms.flushTime)
+	return ms
+}
+func (ms *MemSpace) startFlushRoutine(intervalMs int) {
+	interval := time.Duration(intervalMs) * time.Millisecond
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			err := ms.flush()
+			if err != nil {
+				fmt.Printf("Flush failed: %v\n", err)
+			}
+		case <-ms.stopFlush:
+			fmt.Println("Flushing routine stopped.")
+			return
+		}
+	}
+}
+
+// 模拟将 TempMemUnits 刷入数据库的函数（你来实现具体逻辑）
+func (ms *MemSpace) flush() error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	// 如果没有数据，跳过
+	if len(ms.TempMemUnits) == 0 {
+		return nil
+	}
+
+	fmt.Printf("Flushing %d temporary memory units to DB...\n", len(ms.TempMemUnits))
+	for _, unit := range ms.TempMemUnits {
+		if unit != nil {
+
+		} else {
+			break
+		}
+	}
+	return nil
+}
+
+func (ms *MemSpace) StopFlushRoutine() {
+	close(ms.stopFlush)
 }
 
 // ---------------------------Persist memory operation: I want this part focus on memory record operations----------------------------
 
-func (ms *MemSpace) PersistMemoryUint(key string, data []byte) error {
-
+func (ms *MemSpace) SaveTempMemory(content string, agentId uint64) error {
+	if !ms.checkAuthority() {
+		return fmt.Errorf("authority check failed!please check permission of the agent %d", agentId)
+	}
+	if content == "" {
+		return fmt.Errorf("content is empty")
+	}
+	cleanedContent := ms.preClean(content)
+	// check tempIndex boundary
+	if ms.tempIndexPtr == ms.tempSpaceSize-1 {
+		ms.tempIndexPtr = 0
+	}
+	ms.TempMemUnits[ms.tempIndexPtr] = &TempMemUnit{cleanedContent, uint64(time.Now().Unix())}
 	return nil
+}
+
+func (ms *MemSpace) GetTempSpaceMemory() string {
+	var result string = ""
+	for _, unit := range ms.TempMemUnits {
+		if unit != nil {
+			value := unit.Value
+			timestamp := unit.Timestamp
+			result = fmt.Sprintf("%s+[TimeStamp:%d][content:%s]", result, timestamp, value)
+		} else {
+			break
+		}
+	}
+	return result
 }
 func (ms *MemSpace) GetPersistMemoryUint(key string) ([]byte, error) {
 	return nil, nil
 }
 func (ms *MemSpace) UpdatePersistMemory(key string, data []byte) error {
+	return nil
+}
+func (ms *MemSpace) PersistMemoryUint(key string, data []byte) error {
 	return nil
 }
 func (ms *MemSpace) DeletePersistMemory(key string) error {
@@ -102,23 +187,19 @@ func (ms *MemSpace) ListPersistMemories() []string {
 }
 
 // ---------------------------agent operation----------------------------
+// todo should the memspace have tha ability to bind the agent?
 
-func (ms *MemSpace) BindAgent(agentID uint64) error {
-	return nil
-}
-func (ms *MemSpace) UnbindAgent(agentID uint64) error {
-	return nil
-}
 func (ms *MemSpace) GetBoundAgents() []uint64 {
 	return ms.BindingAgents
 }
-func (ms *MemSpace) IsAgentBound(agentID uint64) bool {
+func (ms *MemSpace) IsBounded(agentID uint64) bool {
 	return false
 }
 
-// canBinding space can binding?
+// canBinding space can binding? todo: authority check
 func (ms *MemSpace) canBinding() bool {
-	return false
+
+	return true
 }
 
 // SearchByVector 使用查询向量搜索相似记忆
@@ -287,113 +368,6 @@ func (ms *MemSpace) preClean(content string) string {
 	return cleaned
 }
 
-// removeSpecialCharacters 移除特殊字符，保留字母、数字、中文和基本标点
-func removeSpecialCharacters(text string) string {
-	var result strings.Builder
-	for _, r := range text {
-		// 保留：字母、数字、空格、中文
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			(r == ' ') ||
-			(r >= '\u4e00' && r <= '\u9fff') { // 中文范围
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
-// cleanForToolMemory 工具记忆的特定清理
-func cleanForToolMemory(text string) string {
-	var result strings.Builder
-	for _, r := range text {
-		// 保留字母、数字、空格
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			(r == ' ') {
-			result.WriteRune(r)
-		} else if r == ',' || r == '(' || r == ')' {
-			// 对于逗号和括号，添加空格来分隔单词
-			result.WriteRune(' ')
-		}
-	}
-
-	// 清理多余的空格
-	return strings.Join(strings.Fields(result.String()), " ")
-}
-
-// cleanForContentMemory 内容记忆的特定清理
-func cleanForContentMemory(text string) string {
-	var result strings.Builder
-	for _, r := range text {
-		// 只保留字母、数字、空格、中文
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			(r == ' ') ||
-			(r >= '\u4e00' && r <= '\u9fff') {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
-// cleanForBehavioralMemory 行为记忆的特定清理
-func cleanForBehavioralMemory(text string) string {
-	// 行为记忆保留字母、数字、中文
-	var result strings.Builder
-	for _, r := range text {
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			(r == ' ') ||
-			(r >= '\u4e00' && r <= '\u9fff') {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
-// cleanForEpisodicMemory 情景记忆的特定清理
-func cleanForEpisodicMemory(text string) string {
-	// 情景记忆保留字母、数字、中文
-	var result strings.Builder
-	for _, r := range text {
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			(r == ' ') ||
-			(r >= '\u4e00' && r <= '\u9fff') {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
-// removeStopWords 移除停用词
-func removeStopWords(text string) string {
-	stopWords := []string{"的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好", "自己", "这", "那", "但", "什么", "把", "又", "可以"}
-
-	words := strings.Fields(text)
-	var result []string
-
-	for _, word := range words {
-		isStopWord := false
-		for _, stopWord := range stopWords {
-			if word == stopWord {
-				isStopWord = true
-				break
-			}
-		}
-		if !isStopWord && len(word) > 0 {
-			result = append(result, word)
-		}
-	}
-
-	return strings.Join(result, " ")
-}
-
 // removeRepeatedPunctuation 移除连续的标点符号
 func removeRepeatedPunctuation(text string) string {
 	// 由于我们已经移除了所有标点符号，这个函数现在只需要处理空格
@@ -509,6 +483,10 @@ func (ms *MemSpace) GetVectorStats() map[string]interface{} {
 		"space_limit":      ms.spaceLimit,
 		"space_usage":      fmt.Sprintf("%.2f%%", float64(ms.availSpace)/float64(ms.spaceLimit)*100),
 	}
+}
+
+func (ms *MemSpace) checkAuthority() bool {
+	return true
 }
 
 // 辅助函数

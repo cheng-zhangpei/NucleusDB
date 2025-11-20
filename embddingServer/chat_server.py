@@ -207,7 +207,9 @@ def quick_chat():
         ]
 
         logger.info(f"Quick chat request: {message[:100]}...")
-
+        api_key = os.getenv("NucleusDBLLMKey")
+        logger.info("read key=[%s]", api_key)  # 看是不是 None
+        logger.info("read key=[%s***]", api_key[:8])  # 脱敏看首尾
         result = chat_server.chat_completion(messages=messages, stream=False)
 
         return jsonify({

@@ -8,7 +8,6 @@ import (
 func TestEncodeDecodeMMSpace(t *testing.T) {
 	// 创建测试用的 MemSpace
 	original := &MemSpace{
-		CreateAgentId: 123456789,
 		MemSpaceId:    987654321,
 		BindingAgents: []uint64{111, 222, 333, 444, 555},
 		memUints: []*MemUint{
@@ -27,8 +26,8 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		},
 		TempMemUnits: []*TempMemUnit{ // 这个字段不应该被编码
 			{
-				value:     "temp_value",
-				timestamp: 1641168000000,
+				Value:     "temp_value",
+				Timestamp: 1641168000000,
 			},
 		},
 		vectorUints:         []*VectorRecord{}, // 这个字段不应该被编码
@@ -53,11 +52,6 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		decoded, err := DecodeMMSpace(encoded)
 		if err != nil {
 			t.Fatalf("Decode failed: %v", err)
-		}
-
-		// 验证基本字段
-		if decoded.CreateAgentId != original.CreateAgentId {
-			t.Errorf("CreateAgentId mismatch: got %d, want %d", decoded.CreateAgentId, original.CreateAgentId)
 		}
 
 		if decoded.MemSpaceId != original.MemSpaceId {
@@ -135,7 +129,6 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		}
 
 		t.Logf("Test passed: all fields match")
-		t.Logf("CreateAgentId: %d", decoded.CreateAgentId)
 		t.Logf("MemSpaceId: %d", decoded.MemSpaceId)
 		t.Logf("BindingAgents: %v", decoded.BindingAgents)
 		t.Logf("MemUints count: %d", len(decoded.memUints))
@@ -150,7 +143,6 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 
 	t.Run("Empty MemSpace", func(t *testing.T) {
 		emptySpace := &MemSpace{
-			CreateAgentId:       0,
 			MemSpaceId:          0,
 			BindingAgents:       []uint64{},
 			memUints:            []*MemUint{},
@@ -176,7 +168,7 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 		}
 
 		// 验证空值
-		if decoded.CreateAgentId != 0 || decoded.MemSpaceId != 0 ||
+		if decoded.MemSpaceId != 0 ||
 			len(decoded.BindingAgents) != 0 || len(decoded.memUints) != 0 ||
 			decoded.spaceType != Private || decoded.spaceStatus != Pending ||
 			decoded.spaceLimit != 0 || decoded.availSpace != 0 ||
@@ -197,7 +189,6 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 			for _, spaceStatus := range spaceStatuses {
 				for _, contentType := range contentTypes {
 					testData := &MemSpace{
-						CreateAgentId:       uint64(spaceType)*1000 + uint64(spaceStatus),
 						MemSpaceId:          uint64(spaceType)*10000 + uint64(spaceStatus),
 						BindingAgents:       []uint64{1, 2, 3},
 						memUints:            []*MemUint{},
@@ -248,7 +239,6 @@ func TestEncodeDecodeMMSpace(t *testing.T) {
 
 	t.Run("Large data", func(t *testing.T) {
 		largeSpace := &MemSpace{
-			CreateAgentId:       999,
 			MemSpaceId:          888,
 			BindingAgents:       make([]uint64, 1000),
 			memUints:            make([]*MemUint, 100),

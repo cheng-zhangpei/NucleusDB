@@ -24,9 +24,9 @@ type MemUint struct {
 }
 type TempMemUnit struct {
 	// the content of the temp conversation
-	value string
+	Value string
 	//the timestamp of the content
-	timestamp uint64
+	Timestamp uint64
 }
 
 func NewMemUint(key []byte, value []byte, unitType ComputeType) *MemUint {
@@ -51,11 +51,11 @@ func (mu *MemUint) GetMemoryValue() string {
 	return string(mu.value)
 }
 
-// convert translate tempUint to MemUint,path is the key of the memspace its belong to
+// convert (aborted): translate tempUint to MemUint,path is the key of the memspace its belong to
 func (tmu *TempMemUnit) convert(path string, computeType ComputeType) *MemUint {
 	t := time.Now()
 	milliTimestamp := uint64(t.UnixMilli())
 	key := fmt.Sprintf("%s/%d", path, milliTimestamp)
-	memUint := NewMemUint([]byte(key), []byte(tmu.value), computeType)
+	memUint := NewMemUint([]byte(key), []byte(tmu.Value), computeType)
 	return memUint
 }

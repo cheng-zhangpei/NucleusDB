@@ -17,15 +17,15 @@ func NewAgentManager(memSpaceManager *memspace.MemSpaceManager) *AgentManager {
 	}
 }
 
-func (am *AgentManager) RegisterInternalAgent(id uint64, chatSeverAddr string, embeddingServerAddr string) error {
+// RegisterInternalAgent register a internal Agent(it is mean the agent style is defined by our system)
+func (am *AgentManager) RegisterInternalAgent(id uint64, chatSeverAddr, embeddingServerAddr, character, work string) (*InternalAgent, error) {
 	// 判断id是否重复
 	if _, exists := am.internalAgents[id]; exists {
-		return fmt.Errorf("agent with id %d already exists", id)
+		return nil, fmt.Errorf("agent with id %d already exists", id)
 	}
-
-	agent := NewInternalAgent(id, chatSeverAddr, embeddingServerAddr)
+	agent := NewInternalAgent(id, chatSeverAddr, embeddingServerAddr, character, work)
 	am.internalAgents[id] = agent
-	return nil
+	return agent, nil
 }
 
 // BindingPrivateMemSpace  binding memspace with agent
@@ -46,9 +46,11 @@ func (am *AgentManager) BindingPrivateMemSpace(agentId uint64, memSpaceId uint64
 	// 修改Agent信息
 	agent.privateMemSpaceKeys = memSpaceId
 	agent.isBindingPrivate = true
+
 	// 修改对应卷信息
 	space := am.mmManager.PrivateTable[memSpaceId]
 	space.BindingAgents = append(space.BindingAgents, agentId)
+	agent.privateMm = space
 	return nil
 }
 
@@ -151,5 +153,14 @@ func (am *AgentManager) ListInternalAgent() []*InternalAgent {
 func (am *AgentManager) PrintInternalAgent(id uint64) {
 	for _, agent := range am.internalAgents {
 		print(agent)
+	}
+}
+
+func (am *AgentManager) GetInternalAgent(id uint64) (*InternalAgent, error) {
+	agent, exist := am.internalAgents[id]
+	if !exist {
+		return nil, fmt.Errorf("agent with id %d does not exists", id)
+	} else {
+		return agent, nil
 	}
 }

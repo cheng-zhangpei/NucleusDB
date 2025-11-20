@@ -48,14 +48,15 @@ func NewMemSpaceManager(dbClient *NucleusClient, privatePath string,
 }
 
 // =========================================memory space operation===========================================
-// RegisterMemSpace
+
+// RegisterMemSpace register a memSpace
 func (msm *MemSpaceManager) RegisterMemSpace(id uint64, spaceType MemSpaceType, spaceLimit uint64,
-	memSpaceContentType MemSpaceContentType, embeddingClientAddr string) error {
+	memSpaceContentType MemSpaceContentType, embeddingClientAddr string, flushTime int, tempMemSpaceSize uint64) error {
 	// 保存元数据
 	metaData := NewMemMetaData(id, spaceType, spaceLimit)
 	msm.metaTable[id] = metaData
 	metaKey := fmt.Sprintf("%s/%d", msm.metaPath, id)
-	mmSpace := NewMemSpace(id, spaceType, spaceLimit, memSpaceContentType, embeddingClientAddr)
+	mmSpace := NewMemSpace(id, spaceType, spaceLimit, memSpaceContentType, embeddingClientAddr, flushTime, tempMemSpaceSize)
 	var path string
 	if spaceType == Private {
 		msm.PrivateTable[id] = mmSpace
