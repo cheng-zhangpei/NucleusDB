@@ -66,16 +66,22 @@ type MemSpace struct {
 	mu                    *sync.RWMutex
 	tempIndexPtr          uint64 // the latest/update position of the temp memory space
 	tempSpaceSize         uint64 // indicate the size of the temp memSpace
+	persistKey            string // record the area the memspace persist the memUint
+	dbClient              *NucleusClient
+
+	eventChan chan<- MemEvent
 }
 
 func NewMemSpace(id uint64, spaceType MemSpaceType,
 	spaceLimit uint64, memSpaceContentType MemSpaceContentType,
-	embeddingServerAddr string, flushTime int, tempMemoSize uint64) *MemSpace {
+	embeddingServerAddr string, flushTime int, tempMemoSize uint64, MemSpacePersistKey string,
+	dbClient *NucleusClient, memEventChan chan MemEvent) *MemSpace {
 	embeddingClient := NewEmbeddingServerClient(embeddingServerAddr)
 	ms := &MemSpace{
 		MemSpaceId: id,
 		// todo 这些空间的大小限制还没有作
-		BindingAgents:       make([]uint64, 0),
+		BindingAgents: make([]uint64, 0),
+		// todo 这里我是否可以搞一个类似冷热分层? 后续有空再来吧
 		memUints:            make([]*MemUint, 0),
 		TempMemUnits:        make([]*TempMemUnit, tempMemoSize),
 		vectorUints:         make([]*VectorRecord, 0),
@@ -91,6 +97,9 @@ func NewMemSpace(id uint64, spaceType MemSpaceType,
 		mu:                    new(sync.RWMutex),
 		tempIndexPtr:          0,
 		tempSpaceSize:         tempMemoSize,
+		persistKey:            MemSpacePersistKey,
+		dbClient:              dbClient,
+		eventChan:             memEventChan,
 	}
 
 	go ms.startFlushRoutine(ms.flushTime)
@@ -118,16 +127,25 @@ func (ms *MemSpace) startFlushRoutine(intervalMs int) {
 func (ms *MemSpace) flush() error {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
-
 	// 如果没有数据，跳过
-	if len(ms.TempMemUnits) == 0 {
+	if ms.TempMemUnits[0] == nil {
 		return nil
 	}
 
-	fmt.Printf("Flushing %d temporary memory units to DB...\n", len(ms.TempMemUnits))
+	fmt.Printf("[flush go routine][%s] Flushing temporary memory units to DB...\n", getCurrentTimeString())
 	for _, unit := range ms.TempMemUnits {
 		if unit != nil {
-
+			timeStamp := unit.Timestamp
+			content := unit.Value
+			persistUint := []byte(fmt.Sprintf("[time(ms): %d]: %s", timeStamp, content))
+			// todo 这里刷新需要如何处理共享卷？
+			persistKey := fmt.Sprintf("[%d] %s", timeStamp, ms.persistKey)
+			err := ms.PersistMemoryUint(persistKey, persistUint)
+			if err != nil {
+				return err
+			}
+			// modify the meta data of the memspace
+			ms.NotifyManager()
 		} else {
 			break
 		}
@@ -156,7 +174,6 @@ func (ms *MemSpace) SaveTempMemory(content string, agentId uint64) error {
 	ms.TempMemUnits[ms.tempIndexPtr] = &TempMemUnit{cleanedContent, uint64(time.Now().Unix())}
 	return nil
 }
-
 func (ms *MemSpace) GetTempSpaceMemory() string {
 	var result string = ""
 	for _, unit := range ms.TempMemUnits {
@@ -176,7 +193,16 @@ func (ms *MemSpace) GetPersistMemoryUint(key string) ([]byte, error) {
 func (ms *MemSpace) UpdatePersistMemory(key string, data []byte) error {
 	return nil
 }
+
+// PersistMemoryUint persist tempMemUint
 func (ms *MemSpace) PersistMemoryUint(key string, data []byte) error {
+	// we only need to persist a single unit no need to use transaction? you need to modify the mate data
+
+	err := ms.dbClient.DistributePut([]byte(key), data)
+
+	if err != nil {
+		return err
+	}
 	return nil
 }
 func (ms *MemSpace) DeletePersistMemory(key string) error {
@@ -198,7 +224,6 @@ func (ms *MemSpace) IsBounded(agentID uint64) bool {
 
 // canBinding space can binding? todo: authority check
 func (ms *MemSpace) canBinding() bool {
-
 	return true
 }
 
@@ -504,4 +529,34 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// NotifyManager inform the manager which part should be modified in metaData
+func (ms *MemSpace) NotifyManager() {
+	// 加读锁，安全读取当前状态
+	ms.mu.RLock()
+	event := MemEvent{
+		MemSpaceId:          ms.MemSpaceId,
+		spaceType:           ms.spaceType,
+		spaceStatus:         ms.spaceStatus,
+		spaceLimit:          ms.spaceLimit,
+		availSpace:          ms.availSpace,
+		description:         ms.description,
+		name:                ms.name,
+		memSpaceContentType: ms.memSpaceContentType,
+		flushTime:           ms.flushTime,
+		tempIndexPtr:        ms.tempIndexPtr,
+		tempSpaceSize:       ms.tempSpaceSize,
+		persistKey:          ms.persistKey,
+	}
+	ms.mu.RUnlock()
+
+	// 发送事件（非阻塞）
+	select {
+	case ms.eventChan <- event:
+		// 成功发送
+	default:
+		// channel 满了，丢弃事件（可选：记录日志）
+		// log.Printf("event channel full, dropped update for MemSpace %d", ms.MemSpaceId)
+	}
 }

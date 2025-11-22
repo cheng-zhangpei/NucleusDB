@@ -1,6 +1,9 @@
 package memspace
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // removeSpecialCharacters 移除特殊字符，保留字母、数字、中文和基本标点
 func removeSpecialCharacters(text string) string {
@@ -107,4 +110,14 @@ func removeStopWords(text string) string {
 	}
 
 	return strings.Join(result, " ")
+}
+
+func getCurrentTimeUint64() uint64 {
+	now := time.Now()
+	return uint64(now.Unix())
+}
+
+func getCurrentTimeString() string {
+	now := time.Now()
+	return now.String()
 }

@@ -3,6 +3,7 @@ package memspace
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 )
 
 // vector decoder
@@ -21,15 +22,9 @@ func DecodeMMMetaList(data [][]byte) ([]*MemMetaData, error) {
 	}
 	return metaData, nil
 }
+
 func DecodeMMMeta(data []byte) (*MemMetaData, error) {
-	mm := &MemMetaData{
-		0,
-		nil,
-		Private,
-		Pending,
-		0,
-		0,
-	}
+	mm := NewMemMetaData(0, Private, 0)
 	index := 0
 
 	// 读取 MemSpaceId
@@ -99,51 +94,55 @@ func DecodeMMSpace(data []byte) (*MemSpace, error) {
 	}
 
 	space := &MemSpace{
-		BindingAgents: make([]uint64, 0),
-		memUints:      make([]*MemUint, 0),
-		TempMemUnits:  make([]*TempMemUnit, 0),  // 不编码，初始化为空
-		vectorUints:   make([]*VectorRecord, 0), // 不编码，初始化为空
+		BindingAgents:         make([]uint64, 0),
+		memUints:              make([]*MemUint, 0),
+		TempMemUnits:          make([]*TempMemUnit, 0),  // 不编码，留空
+		vectorUints:           make([]*VectorRecord, 0), // 不编码
+		embeddingServerClient: nil,                      // 运行时对象，不编码
+		stopFlush:             nil,                      // chan 不编码
+		dbClient:              nil,                      // db client 不编码
+		mu:                    &sync.RWMutex{},          // 新建锁
 	}
 
 	index := 0
 
-	// 读取 MemSpaceId
+	// MemSpaceId
 	if index+8 > len(data) {
 		return nil, fmt.Errorf("insufficient data for MemSpaceId")
 	}
 	space.MemSpaceId = binary.LittleEndian.Uint64(data[index : index+8])
 	index += 8
 
-	// 读取 bindingAgents 的长度
+	// bindingAgents 长度
 	if index+8 > len(data) {
 		return nil, fmt.Errorf("insufficient data for bindingAgents length")
 	}
-	bindingAgentsSize := int(binary.LittleEndian.Uint64(data[index : index+8]))
+	bindingSize := int(binary.LittleEndian.Uint64(data[index : index+8]))
 	index += 8
 
-	// 读取 bindingAgents
-	if index+bindingAgentsSize*8 > len(data) {
-		return nil, fmt.Errorf("insufficient data for bindingAgents")
-	}
-	space.BindingAgents = make([]uint64, bindingAgentsSize)
-	for i := 0; i < bindingAgentsSize; i++ {
+	// bindingAgents 数据
+	space.BindingAgents = make([]uint64, bindingSize)
+	for i := 0; i < bindingSize; i++ {
+		if index+8 > len(data) {
+			return nil, fmt.Errorf("insufficient data for bindingAgents[%d]", i)
+		}
 		space.BindingAgents[i] = binary.LittleEndian.Uint64(data[index : index+8])
 		index += 8
 	}
 
-	// 读取 memUints 的长度
+	// memUints 长度
 	if index+8 > len(data) {
 		return nil, fmt.Errorf("insufficient data for memUints length")
 	}
 	memUintsSize := int(binary.LittleEndian.Uint64(data[index : index+8]))
 	index += 8
 
-	// 读取每个 MemUint
-	space.memUints = make([]*MemUint, memUintsSize)
+	// memUints 数据
+	space.memUints = make([]*MemUint, 0, memUintsSize)
 	for i := 0; i < memUintsSize; i++ {
-		memUnit := &MemUint{}
+		mu := &MemUint{}
 
-		// 读取 key
+		// key 长度
 		if index+8 > len(data) {
 			return nil, fmt.Errorf("insufficient data for key length")
 		}
@@ -153,11 +152,11 @@ func DecodeMMSpace(data []byte) (*MemSpace, error) {
 		if index+keySize > len(data) {
 			return nil, fmt.Errorf("insufficient data for key")
 		}
-		memUnit.key = make([]byte, keySize)
-		copy(memUnit.key, data[index:index+keySize])
+		mu.key = make([]byte, keySize)
+		copy(mu.key, data[index:index+keySize])
 		index += keySize
 
-		// 读取 value
+		// value 长度
 		if index+8 > len(data) {
 			return nil, fmt.Errorf("insufficient data for value length")
 		}
@@ -167,91 +166,122 @@ func DecodeMMSpace(data []byte) (*MemSpace, error) {
 		if index+valueSize > len(data) {
 			return nil, fmt.Errorf("insufficient data for value")
 		}
-		memUnit.value = make([]byte, valueSize)
-		copy(memUnit.value, data[index:index+valueSize])
+		mu.value = make([]byte, valueSize)
+		copy(mu.value, data[index:index+valueSize])
 		index += valueSize
 
-		// 读取 unitType
+		// unitType
 		if index+8 > len(data) {
 			return nil, fmt.Errorf("insufficient data for unitType")
 		}
-		memUnit.unitType = ComputeType(binary.LittleEndian.Uint64(data[index : index+8]))
+		mu.unitType = ComputeType(binary.LittleEndian.Uint64(data[index : index+8]))
 		index += 8
 
-		// 读取 timestamp
+		// timestamp
 		if index+8 > len(data) {
 			return nil, fmt.Errorf("insufficient data for timestamp")
 		}
-		memUnit.timestamp = binary.LittleEndian.Uint64(data[index : index+8])
+		mu.timestamp = binary.LittleEndian.Uint64(data[index : index+8])
 		index += 8
 
-		space.memUints[i] = memUnit
+		space.memUints = append(space.memUints, mu)
 	}
 
-	// 读取 spaceType
-	spaceType, bytesRead := binary.Varint(data[index:])
-	if bytesRead <= 0 {
+	// spaceType
+	v, n := binary.Varint(data[index:])
+	if n <= 0 {
 		return nil, fmt.Errorf("invalid spaceType")
 	}
-	space.spaceType = MemSpaceType(spaceType)
-	index += bytesRead
+	space.spaceType = MemSpaceType(v)
+	index += n
 
-	// 读取 spaceStatus
-	spaceStatus, bytesRead := binary.Varint(data[index:])
-	if bytesRead <= 0 {
+	// spaceStatus
+	v, n = binary.Varint(data[index:])
+	if n <= 0 {
 		return nil, fmt.Errorf("invalid spaceStatus")
 	}
-	space.spaceStatus = MemSpaceStatus(spaceStatus)
-	index += bytesRead
+	space.spaceStatus = MemSpaceStatus(v)
+	index += n
 
-	// 读取 spaceLimit
-	spaceLimit, bytesRead := binary.Uvarint(data[index:])
-	if bytesRead <= 0 {
+	// spaceLimit
+	limit, n := binary.Uvarint(data[index:])
+	if n <= 0 {
 		return nil, fmt.Errorf("invalid spaceLimit")
 	}
-	space.spaceLimit = spaceLimit
-	index += bytesRead
+	space.spaceLimit = limit
+	index += n
 
-	// 读取 availSpace
-	availSpace, bytesRead := binary.Uvarint(data[index:])
-	if bytesRead <= 0 {
+	// availSpace
+	avail, n := binary.Uvarint(data[index:])
+	if n <= 0 {
 		return nil, fmt.Errorf("invalid availSpace")
 	}
-	space.availSpace = availSpace
-	index += bytesRead
+	space.availSpace = avail
+	index += n
 
-	// 读取 description
-	descSize, bytesRead := binary.Uvarint(data[index:])
-	if bytesRead <= 0 {
+	// description
+	descLen, n := binary.Uvarint(data[index:])
+	if n <= 0 {
 		return nil, fmt.Errorf("invalid description length")
 	}
-	index += bytesRead
-
-	if index+int(descSize) > len(data) {
+	index += n
+	if index+int(descLen) > len(data) {
 		return nil, fmt.Errorf("insufficient data for description")
 	}
-	space.description = string(data[index : index+int(descSize)])
-	index += int(descSize)
+	space.description = string(data[index : index+int(descLen)])
+	index += int(descLen)
 
-	// 读取 name
-	nameSize, bytesRead := binary.Uvarint(data[index:])
-	if bytesRead <= 0 {
+	// name
+	nameLen, n := binary.Uvarint(data[index:])
+	if n <= 0 {
 		return nil, fmt.Errorf("invalid name length")
 	}
-	index += bytesRead
-
-	if index+int(nameSize) > len(data) {
+	index += n
+	if index+int(nameLen) > len(data) {
 		return nil, fmt.Errorf("insufficient data for name")
 	}
-	space.name = string(data[index : index+int(nameSize)])
-	index += int(nameSize)
+	space.name = string(data[index : index+int(nameLen)])
+	index += int(nameLen)
 
-	// 读取 memSpaceContentType
-	contentType, bytesRead := binary.Varint(data[index:])
-	if bytesRead <= 0 {
+	// memSpaceContentType
+	ct, n := binary.Varint(data[index:])
+	if n <= 0 {
 		return nil, fmt.Errorf("invalid memSpaceContentType")
 	}
-	space.memSpaceContentType = MemSpaceContentType(contentType)
+	space.memSpaceContentType = MemSpaceContentType(ct)
+	index += n
+
+	// flushTime (int)
+	if index+8 > len(data) {
+		return nil, fmt.Errorf("insufficient data for flushTime")
+	}
+	space.flushTime = int(binary.LittleEndian.Uint64(data[index : index+8]))
+	index += 8
+
+	// tempIndexPtr
+	if index+8 > len(data) {
+		return nil, fmt.Errorf("insufficient data for tempIndexPtr")
+	}
+	space.tempIndexPtr = binary.LittleEndian.Uint64(data[index : index+8])
+	index += 8
+
+	// tempSpaceSize
+	if index+8 > len(data) {
+		return nil, fmt.Errorf("insufficient data for tempSpaceSize")
+	}
+	space.tempSpaceSize = binary.LittleEndian.Uint64(data[index : index+8])
+	index += 8
+
+	// persistKey
+	pkLen, n := binary.Uvarint(data[index:])
+	if n <= 0 {
+		return nil, fmt.Errorf("invalid persistKey length")
+	}
+	index += n
+	if index+int(pkLen) > len(data) {
+		return nil, fmt.Errorf("insufficient data for persistKey")
+	}
+	space.persistKey = string(data[index : index+int(pkLen)])
 
 	return space, nil
 }

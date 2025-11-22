@@ -1,7 +1,9 @@
 package memspace
 
 import (
+	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type MemSpaceManager struct {
@@ -19,6 +21,27 @@ type MemSpaceManager struct {
 	metaPath string
 	// path - 3, shared path
 	sharedPath string
+	eventChan  chan MemEvent
+}
+
+// MemEvent :Persist attribute requiring persistence
+type MemEvent struct {
+	MemSpaceId uint64
+	// the type of the memSpace
+	spaceType MemSpaceType
+	// status
+	spaceStatus MemSpaceStatus
+	spaceLimit  uint64
+	availSpace  uint64
+	// Memory Space description
+	description string
+
+	name                string
+	memSpaceContentType MemSpaceContentType
+	flushTime           int
+	tempIndexPtr        uint64 // the latest/update position of the temp memory space
+	tempSpaceSize       uint64 // indicate the size of the temp memSpace
+	persistKey          string // record the area the memspace persist the memUint
 }
 
 func NewMemSpaceManager(dbClient *NucleusClient, privatePath string,
@@ -56,7 +79,15 @@ func (msm *MemSpaceManager) RegisterMemSpace(id uint64, spaceType MemSpaceType, 
 	metaData := NewMemMetaData(id, spaceType, spaceLimit)
 	msm.metaTable[id] = metaData
 	metaKey := fmt.Sprintf("%s/%d", msm.metaPath, id)
-	mmSpace := NewMemSpace(id, spaceType, spaceLimit, memSpaceContentType, embeddingClientAddr, flushTime, tempMemSpaceSize)
+	// 由类型决定
+	var memPath string = ""
+	if spaceType == Shared {
+		memPath = msm.sharedPath
+	} else {
+		memPath = msm.privatePath
+	}
+	mmSpace := NewMemSpace(id, spaceType, spaceLimit, memSpaceContentType, embeddingClientAddr,
+		flushTime, tempMemSpaceSize, memPath, msm.dbClient, msm.eventChan)
 	var path string
 	if spaceType == Private {
 		msm.PrivateTable[id] = mmSpace
@@ -175,11 +206,67 @@ func (msm *MemSpaceManager) CanBindingPrivate(id uint64) bool {
 	}
 }
 
-// CanBindingPublic if can bind a shared memspace
+// CanBindingPublic if agent can bind a shared memspace
 func (msm *MemSpaceManager) CanBindingPublic(id uint64) bool {
 	_, exist := msm.PublicTable[id]
 	if !exist {
 		return false
 	}
 	return true
+}
+
+func (msm *MemSpaceManager) PersistMemMeta() error {
+	return nil
+}
+
+// BuildMemSpaceByMeta 使用内存中的meta数据重建记忆空间
+func (msm *MemSpaceManager) BuildMemSpaceByMeta() error {
+
+	return nil
+}
+
+func (msm *MemSpaceManager) StartEventProcessor() {
+	go func() {
+		for event := range msm.eventChan {
+			msm.handleEvent(event)
+		}
+	}()
+}
+
+// handleEvent handle meta data update request
+func (msm *MemSpaceManager) handleEvent(event MemEvent) {
+	id := event.MemSpaceId
+	meta := msm.metaTable[id]
+
+	if meta == nil {
+		meta = NewMemMetaData(id, event.spaceType, event.spaceLimit)
+		msm.metaTable[id] = meta
+	}
+
+	if event.spaceType != 0 {
+		meta.SpaceType = event.spaceType
+	}
+
+	meta.SpaceStatus = event.spaceStatus
+	meta.SpaceLimit = event.spaceLimit
+	meta.AvailSpace = event.availSpace
+	meta.Description = event.description
+	meta.Name = event.name
+	meta.MemSpaceContentType = event.memSpaceContentType
+	meta.FlushTime = event.flushTime
+	meta.TempIndexPtr = event.tempIndexPtr
+	meta.TempSpaceSize = event.tempSpaceSize
+	meta.PersistKey = event.persistKey
+	meta.UpdatedAt = time.Now().Unix()
+
+	msm.persistMetaToDB(meta)
+}
+func (msm *MemSpaceManager) persistMetaToDB(meta *MemMetaData) {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		// log error
+		return
+	}
+	key := fmt.Sprintf("%s/%d", msm.metaPath, meta.MemSpaceId)
+	_ = msm.dbClient.DistributePut([]byte(key), data)
 }

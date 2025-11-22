@@ -8,222 +8,212 @@ import (
 // vector encoder
 
 func EncodeMMMeta(mm *MemMetaData) []byte {
-	// 计算 bindingAgents 的长度
 	bindingAgentsSize := len(mm.BindingAgents)
 
-	// 计算缓冲区大小
-	// MemSpaceId (8字节) + CreateAgentId (8字节) + bindingAgents长度 (8字节) + bindingAgents数据 (变长) +
-	// spaceType (变长) + spaceStatus (变长) + spaceLimit (变长) + availSpace (变长)
-	bufSize := 8 + 8 + 8 + bindingAgentsSize*8 +
-		binary.MaxVarintLen64*4 // 4个变长字段
+	// 预估 buffer 大小
+	bufSize := 8 + // MemSpaceId
+		8 + // bindingAgents 长度
+		bindingAgentsSize*8 + // bindingAgents 数据
+		binary.MaxVarintLen64*4 // spaceType, status, limit, avail
 
 	buf := make([]byte, bufSize)
 	index := 0
 
-	// 存储 MemSpaceId (8字节，小端存储)
-	binary.LittleEndian.PutUint64(buf[index:index+8], mm.MemSpaceId)
+	// MemSpaceId
+	binary.LittleEndian.PutUint64(buf[index:], mm.MemSpaceId)
 	index += 8
 
-	// 存储 bindingAgents 的长度 (8字节，小端存储)
-	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(bindingAgentsSize))
+	// bindingAgents 长度
+	binary.LittleEndian.PutUint64(buf[index:], uint64(bindingAgentsSize))
 	index += 8
 
-	// 存储 bindingAgents 中的每个 agent ID (8字节，小端存储)
-	for _, agentId := range mm.BindingAgents {
-		binary.LittleEndian.PutUint64(buf[index:index+8], agentId)
+	// bindingAgents 内容
+	for _, id := range mm.BindingAgents {
+		binary.LittleEndian.PutUint64(buf[index:], id)
 		index += 8
 	}
 
-	// 存储 spaceType（变长编码）
+	// 变长整数
 	index += binary.PutVarint(buf[index:], int64(mm.SpaceType))
-
-	// 存储 spaceStatus（变长编码）
 	index += binary.PutVarint(buf[index:], int64(mm.SpaceStatus))
-
-	// 存储 spaceLimit（变长编码）
 	index += binary.PutUvarint(buf[index:], mm.SpaceLimit)
-
-	// 存储 availSpace（变长编码）
 	index += binary.PutUvarint(buf[index:], mm.AvailSpace)
 
-	// 返回实际写入的字节数据
 	return buf[:index]
 }
 func EncodeMMSpace(space *MemSpace) ([]byte, error) {
-	// 计算 bindingAgents 的长度
-	bindingAgentsSize := len(space.BindingAgents)
-
-	// 计算 memUints 的长度
-	memUintsSize := len(space.memUints)
-
-	// 计算 description 和 name 的字节长度
-	descBytes := []byte(space.description)
-	nameBytes := []byte(space.name)
-	descSize := len(descBytes)
-	nameSize := len(nameBytes)
-
-	// 重新计算缓冲区大小 - 更精确的计算
-	bufSize := 0
-
-	// 固定长度字段
-	bufSize += 8 + 8 + 8 + (bindingAgentsSize * 8) + 8 // CreateAgentId + MemSpaceId + bindingAgents长度 + bindingAgents数据 + memUints长度
-
-	// 计算每个 MemUint 的大小
-	for _, memUnit := range space.memUints {
-		keySize := len(memUnit.key)
-		valueSize := len(memUnit.value)
-		bufSize += 8 + keySize + 8 + valueSize + 8 + 8 // key长度 + key数据 + value长度 + value数据 + unitType + timestamp
+	if space == nil {
+		return nil, fmt.Errorf("space is nil")
 	}
 
-	// 变长字段的最大可能长度
-	bufSize += binary.MaxVarintLen64 * 7 // 7个变长字段
-
-	// 字符串数据
-	bufSize += descSize + nameSize
-
-	// 添加一些额外空间作为缓冲
-	bufSize += 1024
-
+	bufSize := estimateMMSpaceBufferSize(space)
 	buf := make([]byte, bufSize)
 	index := 0
 
-	// 存储 MemSpaceId (8字节，小端存储)
-	if index+8 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at MemSpaceId")
-	}
+	// MemSpaceId
 	binary.LittleEndian.PutUint64(buf[index:index+8], space.MemSpaceId)
 	index += 8
 
-	// 存储 bindingAgents 的长度 (8字节，小端存储)
-	if index+8 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at bindingAgents length")
-	}
-	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(bindingAgentsSize))
+	// bindingAgents 长度 + 数据
+	bindingSize := len(space.BindingAgents)
+	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(bindingSize))
 	index += 8
-
-	// 存储 bindingAgents 中的每个 agent ID (8字节，小端存储)
-	for _, agentId := range space.BindingAgents {
+	for _, id := range space.BindingAgents {
 		if index+8 > len(buf) {
-			return nil, fmt.Errorf("buffer overflow at bindingAgents data")
+			return nil, fmt.Errorf("buffer overflow in bindingAgents")
 		}
-		binary.LittleEndian.PutUint64(buf[index:index+8], agentId)
+		binary.LittleEndian.PutUint64(buf[index:index+8], id)
 		index += 8
 	}
 
-	// 存储 memUints 的长度 (8字节，小端存储)
-	if index+8 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at memUints length")
-	}
+	// memUints 长度
+	memUintsSize := len(space.memUints)
 	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(memUintsSize))
 	index += 8
 
-	// 存储每个 MemUint
-	for _, memUnit := range space.memUints {
-		keySize := len(memUnit.key)
-		valueSize := len(memUnit.value)
-
-		// 存储 key 的长度和数据
-		if index+8 > len(buf) {
-			return nil, fmt.Errorf("buffer overflow at key length")
+	// 编码每个 MemUint
+	for _, mu := range space.memUints {
+		if mu == nil {
+			mu = &MemUint{}
 		}
+		key := mu.key
+		value := mu.value
+		keySize := len(key)
+		valueSize := len(value)
+
+		// key size + data
 		binary.LittleEndian.PutUint64(buf[index:index+8], uint64(keySize))
 		index += 8
-
 		if index+keySize > len(buf) {
-			return nil, fmt.Errorf("buffer overflow at key data")
+			return nil, fmt.Errorf("buffer overflow in key data")
 		}
-		copy(buf[index:index+keySize], memUnit.key)
+		copy(buf[index:index+keySize], key)
 		index += keySize
 
-		// 存储 value 的长度和数据
-		if index+8 > len(buf) {
-			return nil, fmt.Errorf("buffer overflow at value length")
-		}
+		// value size + data
 		binary.LittleEndian.PutUint64(buf[index:index+8], uint64(valueSize))
 		index += 8
-
 		if index+valueSize > len(buf) {
-			return nil, fmt.Errorf("buffer overflow at value data")
+			return nil, fmt.Errorf("buffer overflow in value data")
 		}
-		copy(buf[index:index+valueSize], memUnit.value)
+		copy(buf[index:index+valueSize], value)
 		index += valueSize
 
-		// 存储 unitType
-		if index+8 > len(buf) {
-			return nil, fmt.Errorf("buffer overflow at unitType")
-		}
-		binary.LittleEndian.PutUint64(buf[index:index+8], uint64(memUnit.unitType))
+		// unitType (uint64)
+		binary.LittleEndian.PutUint64(buf[index:index+8], uint64(mu.unitType))
 		index += 8
 
-		// 存储 timestamp
-		if index+8 > len(buf) {
-			return nil, fmt.Errorf("buffer overflow at timestamp")
-		}
-		binary.LittleEndian.PutUint64(buf[index:index+8], memUnit.timestamp)
+		// timestamp (uint64)
+		binary.LittleEndian.PutUint64(buf[index:index+8], mu.timestamp)
 		index += 8
 	}
 
-	// 存储 spaceType（变长编码）
-	if index+binary.MaxVarintLen64 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at spaceType")
-	}
+	// spaceType (Varint)
 	n := binary.PutVarint(buf[index:], int64(space.spaceType))
+	if n <= 0 {
+		return nil, fmt.Errorf("failed to encode spaceType")
+	}
 	index += n
 
-	// 存储 spaceStatus（变长编码）
-	if index+binary.MaxVarintLen64 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at spaceStatus")
-	}
+	// spaceStatus (Varint)
 	n = binary.PutVarint(buf[index:], int64(space.spaceStatus))
+	if n <= 0 {
+		return nil, fmt.Errorf("failed to encode spaceStatus")
+	}
 	index += n
 
-	// 存储 spaceLimit（变长编码）
-	if index+binary.MaxVarintLen64 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at spaceLimit")
-	}
+	// spaceLimit (Uvarint)
 	n = binary.PutUvarint(buf[index:], space.spaceLimit)
+	if n == 0 {
+		return nil, fmt.Errorf("failed to encode spaceLimit")
+	}
 	index += n
 
-	// 存储 availSpace（变长编码）
-	if index+binary.MaxVarintLen64 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at availSpace")
-	}
+	// availSpace (Uvarint)
 	n = binary.PutUvarint(buf[index:], space.availSpace)
+	if n == 0 {
+		return nil, fmt.Errorf("failed to encode availSpace")
+	}
 	index += n
 
-	// 存储 description 的长度和数据
-	if index+binary.MaxVarintLen64 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at description length")
+	// description (string with uvarint length)
+	descBytes := []byte(space.description)
+	descLen := uint64(len(descBytes))
+	n = binary.PutUvarint(buf[index:], descLen)
+	if n == 0 {
+		return nil, fmt.Errorf("failed to encode description length")
 	}
-	n = binary.PutUvarint(buf[index:], uint64(descSize))
 	index += n
-
-	if index+descSize > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at description data")
+	if index+int(descLen) > len(buf) {
+		return nil, fmt.Errorf("buffer overflow in description")
 	}
-	copy(buf[index:index+descSize], descBytes)
-	index += descSize
+	copy(buf[index:index+int(descLen)], descBytes)
+	index += int(descLen)
 
-	// 存储 name 的长度和数据
-	if index+binary.MaxVarintLen64 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at name length")
+	// name
+	nameBytes := []byte(space.name)
+	nameLen := uint64(len(nameBytes))
+	n = binary.PutUvarint(buf[index:], nameLen)
+	if n == 0 {
+		return nil, fmt.Errorf("failed to encode name length")
 	}
-	n = binary.PutUvarint(buf[index:], uint64(nameSize))
 	index += n
-
-	if index+nameSize > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at name data")
+	if index+int(nameLen) > len(buf) {
+		return nil, fmt.Errorf("buffer overflow in name")
 	}
-	copy(buf[index:index+nameSize], nameBytes)
-	index += nameSize
+	copy(buf[index:index+int(nameLen)], nameBytes)
+	index += int(nameLen)
 
-	// 存储 memSpaceContentType（变长编码）
-	if index+binary.MaxVarintLen64 > len(buf) {
-		return nil, fmt.Errorf("buffer overflow at memSpaceContentType")
-	}
+	// memSpaceContentType (Varint)
 	n = binary.PutVarint(buf[index:], int64(space.memSpaceContentType))
+	if n <= 0 {
+		return nil, fmt.Errorf("failed to encode memSpaceContentType")
+	}
 	index += n
 
-	// 返回实际写入的字节数据
+	// flushTime (int) -> 编码为 int64
+	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(space.flushTime))
+	index += 8
+
+	// tempIndexPtr (uint64)
+	binary.LittleEndian.PutUint64(buf[index:index+8], space.tempIndexPtr)
+	index += 8
+
+	// tempSpaceSize (uint64)
+	binary.LittleEndian.PutUint64(buf[index:index+8], space.tempSpaceSize)
+	index += 8
+
+	// persistKey (string with uvarint length)
+	persistKeyBytes := []byte(space.persistKey)
+	pkLen := uint64(len(persistKeyBytes))
+	n = binary.PutUvarint(buf[index:], pkLen)
+	if n == 0 {
+		return nil, fmt.Errorf("failed to encode persistKey length")
+	}
+	index += n
+	if index+int(pkLen) > len(buf) {
+		return nil, fmt.Errorf("buffer overflow in persistKey")
+	}
+	copy(buf[index:index+int(pkLen)], persistKeyBytes)
+	index += int(pkLen)
+
 	return buf[:index], nil
+}
+func estimateMMSpaceBufferSize(space *MemSpace) int {
+	size := 8 + 8 + len(space.BindingAgents)*8 // MemSpaceId + binding size + agents
+
+	size += 8 // memUints 长度
+	for _, mu := range space.memUints {
+		keySize := len(mu.key)
+		valueSize := len(mu.value)
+		size += 8 + keySize + 8 + valueSize + 8 + 8 // key/value len+data + type + timestamp
+	}
+
+	size += binary.MaxVarintLen64 * 5 // spaceType, status, limit, avail, contentType
+	size += binary.MaxVarintLen64 * 3 // descLen, nameLen, persistKeyLen
+	size += len(space.description) + len(space.name) + len(space.persistKey)
+
+	size += 8 + 8 + 8 + 8 // flushTime, tempIndexPtr, tempSpaceSize, plus padding
+
+	return size + 256 // 额外缓冲
 }

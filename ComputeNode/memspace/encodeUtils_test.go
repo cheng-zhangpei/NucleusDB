@@ -8,7 +8,6 @@ func TestEncodeDecodeMMMeta(t *testing.T) {
 	// 创建测试数据
 	original := NewMemMetaData(1, Private, 1<<20)
 	original.MemSpaceId = 987654321 // 新增字段
-	original.CreateAgentId = 123456789
 	original.BindingAgents = []uint64{111, 222, 333, 444, 555}
 	spaceType := Shared
 	spaceStatus := Binding
@@ -33,15 +32,10 @@ func TestEncodeDecodeMMMeta(t *testing.T) {
 			t.Errorf("MemSpaceId mismatch: got %d, want %d", decoded.MemSpaceId, original.MemSpaceId)
 		}
 
-		if decoded.CreateAgentId != original.CreateAgentId {
-			t.Errorf("CreateAgentId mismatch: got %d, want %d", decoded.CreateAgentId, original.CreateAgentId)
-		}
-
 		// ... 其他验证字段保持不变
 
 		t.Logf("Test passed: all fields match")
 		t.Logf("MemSpaceId: %d", decoded.MemSpaceId) // 新增日志
-		t.Logf("CreateAgentId: %d", decoded.CreateAgentId)
 		t.Logf("BindingAgents: %v", decoded.BindingAgents)
 		t.Logf("SpaceType: %v", decoded.SpaceType)
 		t.Logf("SpaceStatus: %v", decoded.SpaceStatus)
@@ -58,7 +52,6 @@ func TestEncodeDecodeMMMeta(t *testing.T) {
 			for _, spaceStatus := range spaceStatuses {
 				testData := NewMemMetaData(1, Private, 1<<20)
 				testData.MemSpaceId = uint64(spaceType)*10000 + uint64(spaceStatus) // 使用新字段
-				testData.CreateAgentId = uint64(spaceType)*1000 + uint64(spaceStatus)
 				testData.BindingAgents = []uint64{1, 2, 3}
 				testData.SpaceType = spaceType
 				testData.SpaceStatus = spaceStatus
