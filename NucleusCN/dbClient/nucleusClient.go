@@ -158,7 +158,7 @@ func (nc *NucleusClient) DistributeGet(key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to parse JSON response: %v", err)
 	}
 	if len(valueStr) == 0 {
-		return []byte(""), ComputeNode.ErrKeyNotFound
+		return []byte(""), NucleusCN.ErrKeyNotFound
 	}
 	log.Printf("Successfully retrieved value via HTTP: key=%s, value=%s", string(key), valueStr)
 	return []byte(valueStr), nil

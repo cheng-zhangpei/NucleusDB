@@ -1,4 +1,4 @@
-package ComputeNode
+package NucleusCN
 
 import "errors"
 

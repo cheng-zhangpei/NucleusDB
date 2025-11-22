@@ -1,6 +1,6 @@
-// Package ComputeNode
+// Package NucleusCN
 
-package ComputeNode
+package NucleusCN
 
 import (
 	"ComputeNode/agent"
