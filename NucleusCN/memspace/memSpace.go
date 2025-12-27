@@ -1,6 +1,7 @@
 package memspace
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -68,8 +69,9 @@ type MemSpace struct {
 	tempSpaceSize         uint64 // indicate the size of the temp memSpace
 	persistKey            string // record the area the memspace persist the memUint
 	dbClient              *NucleusClient
-
-	eventChan chan<- MemEvent
+	watcher               *Watcher
+	eventChan             chan<- MemEvent
+	EmbeddingDim          int
 }
 
 func NewMemSpace(id uint64, spaceType MemSpaceType,
@@ -78,10 +80,8 @@ func NewMemSpace(id uint64, spaceType MemSpaceType,
 	dbClient *NucleusClient, memEventChan chan MemEvent) *MemSpace {
 	embeddingClient := NewEmbeddingServerClient(embeddingServerAddr)
 	ms := &MemSpace{
-		MemSpaceId: id,
-		// todo 这些空间的大小限制还没有作
-		BindingAgents: make([]uint64, 0),
-		// todo 这里我是否可以搞一个类似冷热分层? 后续有空再来吧
+		MemSpaceId:          id,
+		BindingAgents:       make([]uint64, 0),
 		memUints:            make([]*MemUint, 0),
 		TempMemUnits:        make([]*TempMemUnit, tempMemoSize),
 		vectorUints:         make([]*VectorRecord, 0),
@@ -101,7 +101,9 @@ func NewMemSpace(id uint64, spaceType MemSpaceType,
 		dbClient:              dbClient,
 		eventChan:             memEventChan,
 	}
-
+	if ms.spaceType == Shared {
+		ms.watcher = NewWatcher()
+	}
 	go ms.startFlushRoutine(ms.flushTime)
 	return ms
 }
@@ -132,15 +134,15 @@ func (ms *MemSpace) flush() error {
 		return nil
 	}
 
-	fmt.Printf("[flush go routine][%s] Flushing temporary memory units to DB...\n", getCurrentTimeString())
 	for _, unit := range ms.TempMemUnits {
 		if unit != nil {
 			timeStamp := unit.Timestamp
 			content := unit.Value
 			persistUint := []byte(fmt.Sprintf("[time(ms): %d]: %s", timeStamp, content))
-			// todo 这里刷新需要如何处理共享卷？
-			persistKey := fmt.Sprintf("[%d] %s", timeStamp, ms.persistKey)
+			// todo 这里刷新需要如何处理共享卷？==> 如果是以事务作为提交的单位的话似乎不会有所谓的冲突问题，但是DB层一定要做事务回滚就好了
+			persistKey := fmt.Sprintf("%s [%d] ", ms.persistKey, timeStamp)
 			err := ms.PersistMemoryUint(persistKey, persistUint)
+			fmt.Printf("[flush go routine][%s] Flushing temporary memory units to DB...\n", getCurrentTimeString())
 			if err != nil {
 				return err
 			}
@@ -174,6 +176,7 @@ func (ms *MemSpace) SaveTempMemory(content string, agentId uint64) error {
 	ms.TempMemUnits[ms.tempIndexPtr] = &TempMemUnit{cleanedContent, uint64(time.Now().Unix())}
 	return nil
 }
+
 func (ms *MemSpace) GetTempSpaceMemory() string {
 	var result string = ""
 	for _, unit := range ms.TempMemUnits {
@@ -187,29 +190,105 @@ func (ms *MemSpace) GetTempSpaceMemory() string {
 	}
 	return result
 }
-func (ms *MemSpace) GetPersistMemoryUint(key string) ([]byte, error) {
-	return nil, nil
-}
+
 func (ms *MemSpace) UpdatePersistMemory(key string, data []byte) error {
 	return nil
 }
 
-// PersistMemoryUint persist tempMemUint
+// GetAllPersistMemoryUint retrieves all persisted units from the DB and syncs them to vectorUints.
+func (ms *MemSpace) GetAllPersistMemoryUint(key string) ([][]byte, error) {
+	// 1. Fetch list of values from the KV database using the prefix
+	list, err := ms.dbClient.DistributePrefixList([]byte(ms.persistKey))
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Deserialize the data to sync with in-memory vectorUints
+	var loadedVectors []*VectorRecord
+
+	for _, item := range list {
+		var record VectorRecord
+		// Assuming data is stored as JSON
+		if err := json.Unmarshal(item, &record); err != nil {
+			// If a record is corrupted, we skip it but log the issue
+			fmt.Printf("warning: failed to unmarshal vector record: %v\n", err)
+			continue
+		}
+		loadedVectors = append(loadedVectors, &record)
+	}
+
+	// 3. Thread-safe update of the internal memory structure
+	ms.mu.Lock()
+	ms.vectorUints = loadedVectors
+	ms.mu.Unlock()
+
+	return list, nil
+}
+
+// PersistMemoryUint generates an embedding for the data, persists it to DB, and updates memory.
 func (ms *MemSpace) PersistMemoryUint(key string, data []byte) error {
-	// we only need to persist a single unit no need to use transaction? you need to modify the mate data
+	// 1. Convert input byte data to string for embedding
+	textInput := string(data)
 
-	err := ms.dbClient.DistributePut([]byte(key), data)
+	// 2. Generate embedding vector via the client
+	// Note: We use DefaultEmbeddingDim here, adjust based on your model requirements
+	vectorData, err := ms.embeddingServerClient.EmbedSingle(textInput, ms.EmbeddingDim)
+	if err != nil {
+		return fmt.Errorf("failed to generate embedding: %w", err)
+	}
 
+	// 3. Create a new VectorRecord
+	// Note: Since this function signature doesn't pass an AgentID,
+	// we use the first bound agent ID or 0 as default.
+	var agentID uint64 = 0
+	ms.mu.RLock()
+	if len(ms.BindingAgents) > 0 {
+		agentID = ms.BindingAgents[0]
+	}
+	ms.mu.RUnlock()
+
+	record := NewVectorRecord(agentID, vectorData, textInput)
+
+	// 4. Serialize the record to JSON for storage in the KV DB
+	storageBytes, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to serialize vector record: %w", err)
+	}
+
+	// 5. Persist to the database
+	// We use the provided key to store the serialized vector record
+	err = ms.dbClient.DistributePut([]byte(key), storageBytes)
+	if err != nil {
+		return err
+	}
+
+	// 6. Synchronously update the in-memory vector list
+	ms.mu.Lock()
+	ms.vectorUints = append(ms.vectorUints, record)
+	ms.mu.Unlock()
+
+	return nil
+}
+
+// DeletePersistMemory delete the persist memory
+func (ms *MemSpace) DeletePersistMemory(key string) error {
+	err := ms.dbClient.DistributeDelete([]byte(key))
 	if err != nil {
 		return err
 	}
 	return nil
 }
-func (ms *MemSpace) DeletePersistMemory(key string) error {
-	return nil
-}
-func (ms *MemSpace) ListPersistMemories() []string {
-	return nil
+
+func (ms *MemSpace) ListPersistMemories() ([]string, error) {
+	list, err := ms.dbClient.DistributePrefixList([]byte(""))
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, len(list))
+	for _, bytes := range list {
+		result = append(result, string(bytes))
+	}
+	return result, nil
 }
 
 // ---------------------------agent operation----------------------------
@@ -288,7 +367,8 @@ func (ms *MemSpace) SemanticSearch(queryText string, topK int) ([]*VectorRecord,
 	}
 
 	// 生成查询向量
-	queryVector, err := ms.embeddingServerClient.EmbedSingle(cleanedQuery, 1024)
+	dimensions := ms.getRecommendedDimensions()
+	queryVector, err := ms.embeddingServerClient.EmbedSingle(cleanedQuery, dimensions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate query embedding: %v", err)
 	}

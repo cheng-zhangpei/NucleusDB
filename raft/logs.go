@@ -207,14 +207,14 @@ func (l *raftLog) AppendWithConflictCheck(msg *pb.Message) (uint64, bool) {
 			_ = l.storage.Append(msg.Entries[start:])
 
 			// 调试输出
-			FollowerEnts, err := l.storage.GetEntries()
-			if err != nil {
-				panic(err)
-			}
+			//FollowerEnts, err := l.storage.GetEntries()
+			//if err != nil {
+			//	panic(err)
+			//}
 			log.Printf("After conflict resolution - entries:")
-			for _, entry := range FollowerEnts {
-				log.Printf("Index: %d, Term: %d", entry.Index, entry.Term)
-			}
+			//for _, entry := range FollowerEnts {
+			//log.Printf("Index: %d, Term: %d", entry.Index, entry.Term)
+			//}
 		}
 		// update commited field in raftLog，这里要判断好提交信息是否合法
 		l.commitTo(min(msg.Commit, newIndex))

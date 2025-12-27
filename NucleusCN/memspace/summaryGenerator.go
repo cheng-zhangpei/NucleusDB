@@ -1,4 +1,4 @@
-package agent
+package memspace
 
 type summaryGenerator struct {
 }

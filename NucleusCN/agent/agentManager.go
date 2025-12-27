@@ -23,7 +23,7 @@ func (am *AgentManager) RegisterInternalAgent(id uint64, chatSeverAddr, embeddin
 	if _, exists := am.internalAgents[id]; exists {
 		return nil, fmt.Errorf("agent with id %d already exists", id)
 	}
-	agent := NewInternalAgent(id, chatSeverAddr, embeddingServerAddr, character, work)
+	agent := NewInternalAgent(id, chatSeverAddr, embeddingServerAddr, character, work, am.mmManager)
 	am.internalAgents[id] = agent
 	return agent, nil
 }
@@ -40,7 +40,7 @@ func (am *AgentManager) BindingPrivateMemSpace(agentId uint64, memSpaceId uint64
 		return fmt.Errorf("agent with id %d is already binding private memspace", agentId)
 	}
 	// 判断是否存在记忆空间如果不存在就创建
-	if !am.mmManager.CanBindingPrivate(memSpaceId) {
+	if !am.mmManager.CanMountPrivate(memSpaceId) {
 		return fmt.Errorf("can not bind private mem space %d", memSpaceId)
 	}
 	// 修改Agent信息
@@ -56,7 +56,7 @@ func (am *AgentManager) BindingPrivateMemSpace(agentId uint64, memSpaceId uint64
 
 // BindingPublicMemSpace  binding public memspace with agent
 func (am *AgentManager) BindingPublicMemSpace(agentId uint64, memSpaceId uint64) error {
-	if !am.mmManager.CanBindingPublic(memSpaceId) {
+	if !am.mmManager.CanMountPublic(memSpaceId) {
 		return fmt.Errorf("can not bind private mem space %d", memSpaceId)
 	}
 	agent, exists := am.internalAgents[agentId]
@@ -66,6 +66,7 @@ func (am *AgentManager) BindingPublicMemSpace(agentId uint64, memSpaceId uint64)
 	agent.sharedMemSpaceKeys = append(agent.sharedMemSpaceKeys, memSpaceId)
 	space := am.mmManager.PublicTable[memSpaceId]
 	space.BindingAgents = append(space.BindingAgents, agentId)
+	agent.publicMm = append(agent.publicMm, space)
 	return nil
 }
 

@@ -192,8 +192,8 @@ func (msm *MemSpaceManager) FindToolMemory(agentId uint64) ([]*MemSpace, error) 
 	return nil, nil
 }
 
-// CanBindingPrivate  if the memId existed in the privateMem or sharedMem
-func (msm *MemSpaceManager) CanBindingPrivate(id uint64) bool {
+// CanMountPrivate  if the memId existed in the privateMem or sharedMem
+func (msm *MemSpaceManager) CanMountPrivate(id uint64) bool {
 	pms, exist := msm.PrivateTable[id]
 	if !exist {
 		return false
@@ -206,8 +206,8 @@ func (msm *MemSpaceManager) CanBindingPrivate(id uint64) bool {
 	}
 }
 
-// CanBindingPublic if agent can bind a shared memspace
-func (msm *MemSpaceManager) CanBindingPublic(id uint64) bool {
+// CanMountPublic if agent can bind a shared memspace
+func (msm *MemSpaceManager) CanMountPublic(id uint64) bool {
 	_, exist := msm.PublicTable[id]
 	if !exist {
 		return false
@@ -269,4 +269,10 @@ func (msm *MemSpaceManager) persistMetaToDB(meta *MemMetaData) {
 	}
 	key := fmt.Sprintf("%s/%d", msm.metaPath, meta.MemSpaceId)
 	_ = msm.dbClient.DistributePut([]byte(key), data)
+}
+
+// ---------------check the authority------------
+
+func (msm *MemSpaceManager) CheckAuthority(agentId uint64, mmKey uint64) bool {
+	return true
 }
