@@ -17,7 +17,10 @@ This project originated as an undergraduate thesis and represents a complete end
     *   `Distributed MVCC`: A custom implementation that extends MVCC to the distributed environment.
 *   **Innovative Hybrid Timestamp Architecture:** Proposes a novel hybrid timing scheme that combines a centralized lease-based service (using ZooKeeper) with local physical clocks. This design aims to achieve high transaction throughput while ensuring isolation and preventing clock drift issues, inspired by concepts from Google Spanner and Percolator.
 *   **Efficient Data Management:** Features a `merge` mechanism to reclaim space from deleted records and uses memory-mapped files to accelerate database recovery on startup.
-
+## document
+    you can click the link for the design of this project
+[设计文档](https://github.com/cheng-zhangpei/NucleusDB/blob/main/doc/设计文档.md)
+[document](https://github.com/cheng-zhangpei/NucleusDB/blob/main/doc/doc.md)
 ## 📚 Research Context
 
 ​	ComDB was developed to solve the critical bottleneck of managing vast amounts of long-term memory data for AI agents. Instead of treating the database as a simple external store, this project integrates memory management logic directly into the database layer, providing a seamless interface for LLM applications.
@@ -25,6 +28,7 @@ This project originated as an undergraduate thesis and represents a complete end
 ​	The work serves as the foundational memory backend for a larger vision: **KubeNucleus**, a proposed intelligent data center management system where AI oversees cloud-native infrastructure.
 
 ​	I hope the project can not only used to convenient the inference of LLM, but also convenient the training of LLM. The final goal of this project is to let DB can understand the meaning of the data it store.
+
 
 ## 🔧 Getting Started
 
@@ -36,9 +40,6 @@ This project originated as an undergraduate thesis and represents a complete end
 *   gRPC-Go plugin
 *   ZooKeeper (for the distributed timestamp service,if just use single node mode, can ignore)
 
-### Installation
-
-[installation documentation](https://github.com/cheng-zhangpei/NucleusDB/tree/main/doc/installation.md)
 
 ## 📊 Performance
 
