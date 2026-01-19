@@ -1,6 +1,7 @@
 package memspace
 
 import (
+	"ComputeNode/msg"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -19,6 +20,7 @@ const (
 
 type MemSpaceContentType int
 
+// 这种抽象其实并没有啥意义
 const (
 	ToolMemory       MemSpaceContentType = iota // 工具使用记忆（函数调用、API使用记录）
 	ContentMemory                               // 内容记忆（对话、文档、知识）
@@ -69,7 +71,7 @@ type MemSpace struct {
 	tempSpaceSize         uint64 // indicate the size of the temp memSpace
 	persistKey            string // record the area the memspace persist the memUint
 	dbClient              *NucleusClient
-	watcher               *Watcher
+	Watcher               *Watcher
 	eventChan             chan<- MemEvent
 	EmbeddingDim          int
 }
@@ -102,7 +104,7 @@ func NewMemSpace(id uint64, spaceType MemSpaceType,
 		eventChan:             memEventChan,
 	}
 	if ms.spaceType == Shared {
-		ms.watcher = NewWatcher()
+		ms.Watcher = NewWatcher(id, ms.dbClient)
 	}
 	go ms.startFlushRoutine(ms.flushTime)
 	return ms
@@ -639,4 +641,35 @@ func (ms *MemSpace) NotifyManager() {
 		// channel 满了，丢弃事件（可选：记录日志）
 		// log.Printf("event channel full, dropped update for MemSpace %d", ms.MemSpaceId)
 	}
+}
+
+type ComForMemUint struct {
+	PublicDescribe string
+	ChannelsInfo   map[string][]*ChannelInfo
+}
+
+func (ms *MemSpace) GenerateCommunicationMap() *ComForMemUint {
+	if ms.spaceType != Shared {
+		return nil
+	}
+	communicationMap := ms.Watcher.GenerateCommunicationMap()
+	return &ComForMemUint{
+		ms.description,
+		communicationMap,
+	}
+}
+
+func (ms *MemSpace) TopicExist(topicDes string) bool {
+	if _, ok := ms.Watcher.topicMetadata[topicDes]; ok {
+		return true
+	}
+	return false
+}
+
+func (ms *MemSpace) JointComMap(groupDes string, agentId uint64, channel chan *msg.AgentMsg) {
+	ms.Watcher.subscribeTopic(agentId, groupDes, channel)
+}
+
+func (ms *MemSpace) CreateComMap(groupKey, groupDesc string) {
+	ms.Watcher.registerTopic(groupKey, groupDesc)
 }

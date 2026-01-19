@@ -8,8 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 )
+
+type CommunicationUnit struct {
+	publicIndex    int
+	publicDescribe string
+	channelsInfo   map[string][]*memspace.ChannelInfo
+}
 
 type InternalAgent struct {
 	InternalAgentId     uint64
@@ -27,14 +34,19 @@ type InternalAgent struct {
 
 	msgBuffer []*msg.AgentMsg
 	mmManager *memspace.MemSpaceManager
+	// 将通讯图加载到内存里面
+	communicationMap []*CommunicationUnit
+	comChannel       chan *msg.AgentMsg
+	stopChan         chan struct{} // the chan to notify goroutine when to stop
+	// 这个代码真的太不优雅了.....后面重构要全部重写看得难受死了
+	dbClient *memspace.NucleusClient
 }
 
 func NewInternalAgent(InternalAgentId uint64, chatServerHttpAddr,
-	embeddingServerAddr, character, work string, mmManager *memspace.MemSpaceManager) *InternalAgent {
+	embeddingServerAddr, character, work string, mmManager *memspace.MemSpaceManager, dbClient *memspace.NucleusClient) *InternalAgent {
 	embeddingServerClient := memspace.NewEmbeddingServerClient(embeddingServerAddr)
 	chatClient := call.NewChatServerClient(chatServerHttpAddr)
-
-	return &InternalAgent{
+	agent := &InternalAgent{
 		sharedMemSpaceKeys: make([]uint64, 0),
 		InternalAgentId:    InternalAgentId,
 		embeddingServer:    embeddingServerClient,
@@ -44,7 +56,26 @@ func NewInternalAgent(InternalAgentId uint64, chatServerHttpAddr,
 		work:               work,
 		systemPrompt:       fmt.Sprintf("[role%s,Work:%s]", character, work),
 		mmManager:          mmManager,
+		communicationMap:   make([]*CommunicationUnit, 0),
+		comChannel:         make(chan *msg.AgentMsg),
+		stopChan:           make(chan struct{}),
+		dbClient:           dbClient,
 	}
+	return agent
+}
+func (a *InternalAgent) Start() {
+	log.Println("=============communicate routine start===================")
+	go func() {
+		log.Printf("Agent %d started.\n", a.InternalAgentId)
+		for {
+			select {
+			case msg := <-a.comChannel:
+				a.handleMessageFromAgent(msg)
+			case <-a.stopChan:
+				return
+			}
+		}
+	}()
 }
 
 // -----------------------------------define the action of InternalAgent---------------------------------------------
@@ -82,14 +113,13 @@ func (ag *InternalAgent) CompositeOutput(input string) (string, error) {
 	if !ag.isBindingPrivate {
 		return "", fmt.Errorf("private memory space is not bound")
 	}
-
 	// 1. collect all memspace todo the authority check operation
 	var targetSpaces []*memspace.MemSpace
 	targetSpaces = append(targetSpaces, ag.privateMm) // 私有
 	if len(ag.publicMm) > 0 {
 		targetSpaces = append(targetSpaces, ag.publicMm...) // 公共
+		// 通讯录
 	}
-
 	// 2. 执行 RAG + 路由决策流程 (使用新的 executeRouterChat)
 	agentResp, err := ag.executeRAGChat(targetSpaces, input)
 	if err != nil {
@@ -107,10 +137,9 @@ func (ag *InternalAgent) CompositeOutput(input string) (string, error) {
 
 	// 4. 执行路由动作 (Act on Routing Decision)
 	// 这一步是将 LLM 的决策转化为实际的系统行为
-	//if err := ag.dispatchMessage(agentResp); err != nil {
-	//	log.Printf("Routing dispatch warning: %v", err)
-	//	// 注意：路由失败不应该导致整个函数返回错误，因为回答内容已经生成了
-	//}
+	if err := ag.dispatchMessage(parsedAgentResp); err != nil {
+		log.Printf("Failed to save private temp memory: %v", err)
+	}
 	return parsedAgentResp.Content, nil
 }
 
@@ -214,14 +243,18 @@ func (ag *InternalAgent) TempInputBuilder(tempInput, input string) (string, erro
 // CompositeInputBuilder 使用新的 RAGTemplate 填充数据
 func (ag *InternalAgent) CompositeInputBuilder(context, tempMem, input string) (string, error) {
 	var buf bytes.Buffer
-
+	communicationMap := ag.communicationMap
+	JsonMap, err := MarshalCommunicationUnits(communicationMap)
+	if err != nil {
+		return "", err
+	}
 	// 使用新的结构体 RAGPromptData
 	data := RouterRAGData{
 		Context:    context,
 		TempMemory: tempMem,
 		Input:      input,
+		CommMap:    JsonMap,
 	}
-
 	// 使用新的模板对象 RAGTemplate
 	if err := RouterRAGTemplate.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("RAG template execute failed: %w", err)
@@ -230,9 +263,10 @@ func (ag *InternalAgent) CompositeInputBuilder(context, tempMem, input string) (
 }
 
 // ------------------------------------------------------------------------------------------------
-//                                   RAG
+//
+//	RAG
+//
 // ------------------------------------------------------------------------------------------------
-
 // executeRAGChat 包含核心逻辑：向量搜索 -> 构建 Prompt -> 调用大模型 -> 更新短期记忆
 func (ag *InternalAgent) executeRAGChat(spaces []*memspace.MemSpace, input string) (string, error) {
 	// 1. 检索语义上下文 (Vector Search)
@@ -294,4 +328,118 @@ func (ag *InternalAgent) executeRAGChat(spaces []*memspace.MemSpace, input strin
 	resp := response.Response
 
 	return resp, nil
+}
+
+// --------------------------------communication------------------------------
+
+func (ag *InternalAgent) getCommunicationMap() {
+	if len(ag.publicMm) == 0 {
+		return
+	}
+
+	for i, pm := range ag.publicMm {
+		communicationMap := pm.GenerateCommunicationMap()
+		if len(communicationMap.ChannelsInfo) == 0 {
+			continue
+		}
+		ag.communicationMap[i] = &CommunicationUnit{
+			i,
+			communicationMap.PublicDescribe,
+			communicationMap.ChannelsInfo,
+		}
+	}
+
+}
+
+// JoinComGroup Join communication Group
+func (ag *InternalAgent) JoinComGroup(publicMMKey int, topicDes string) {
+	// exist?
+	if ag.publicMm[publicMMKey] == nil {
+		return
+	}
+	if !ag.publicMm[publicMMKey].TopicExist(topicDes) {
+		return
+	}
+	// join the communication map
+	ag.publicMm[publicMMKey].JointComMap(topicDes, ag.InternalAgentId, ag.comChannel)
+	jsonMap, err := MarshalCommunicationUnits(ag.communicationMap)
+	if err != nil {
+		log.Printf("Failed to marshal communication units: %v", err)
+	} else {
+		log.Printf("agent: %d communication map:", ag.InternalAgentId)
+		log.Println(jsonMap)
+	}
+}
+
+func (ag *InternalAgent) dispatchMessage(agentResp *AgentResponse) error {
+	// todo 这里暂时没有添加组播的字段的
+	if agentResp.TargetSpace == "nil" || agentResp.TargetAgent == "nil" || len(agentResp.Content) == 0 {
+		return nil
+	}
+	// 设置为每个MemSpace自带的默认Topic
+	if agentResp.TargetTopic == "nil" {
+		agentResp.TargetTopic = "Default"
+	}
+	spaceIndex, err := strconv.Atoi(agentResp.TargetSpace)
+	if err != nil {
+		return err
+	}
+	channelID, err := strconv.ParseUint(agentResp.TargetAgent, 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse TargetAgent as uint64: %w", err)
+	}
+
+	space := ag.publicMm[spaceIndex]
+	log.Printf("[Agent %d] send message content %s", ag.InternalAgentId, agentResp.Content)
+	err = space.Watcher.Send(ag.InternalAgentId, channelID, agentResp.TargetTopic, agentResp.Content)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func (a *InternalAgent) handleMessageFromAgent(msg *msg.AgentMsg) {
+	// 1. 收到消息
+	log.Printf("[Agent %d] Received from %d (Topic: %s): %s\n",
+		a.InternalAgentId, msg.From, msg.Topic, msg.Content)
+	// 2. 调用 LLM 处理 (模拟)
+	// 3. 从存储里面拿到数据
+	mem, err := a.GetMessageInPubMem(msg)
+	if err != nil {
+		log.Printf("[Agent %d] Failed to get mem from other internal agent: %v", a.InternalAgentId, err)
+		return
+	}
+
+	reply, err := a.CompositeOutput(mem)
+	if err != nil {
+		log.Printf("[Agent %d] Error: %s\n", a.InternalAgentId, err.Error())
+	}
+	log.Printf("[Agent %d] Response:%s\n", a.InternalAgentId, reply)
+}
+
+func (a *InternalAgent) GetMessageInPubMem(msg *msg.AgentMsg) (string, error) {
+	// 我打算
+	if msg == nil {
+		return "", fmt.Errorf("msg is nil")
+	}
+	if msg.Content == "" {
+		return "", fmt.Errorf("msg content is nil")
+	}
+	data, err := a.dbClient.DistributeGet([]byte(msg.Content))
+	if err != nil {
+		log.Fatalf("db get error: %v\n", err)
+		return "", err
+	}
+	return string(data), nil
+}
+
+func (a *InternalAgent) Stop() {
+	// 使用 select 防止重复关闭导致 panic
+	select {
+	case <-a.stopChan:
+		// 已经关闭了，直接返回
+		return
+	default:
+		// 关闭通道，通知 RunLoop 退出
+		close(a.stopChan)
+	}
 }

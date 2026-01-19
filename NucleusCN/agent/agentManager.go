@@ -8,12 +8,15 @@ import (
 type AgentManager struct {
 	internalAgents map[uint64]*InternalAgent
 	mmManager      *memspace.MemSpaceManager
+	dbClient       *memspace.NucleusClient
 }
 
-func NewAgentManager(memSpaceManager *memspace.MemSpaceManager) *AgentManager {
+func NewAgentManager(memSpaceManager *memspace.MemSpaceManager, dbHttpAddr string, raftId int) *AgentManager {
+	client := memspace.NewNucleusClient(dbHttpAddr, raftId)
 	return &AgentManager{
 		internalAgents: make(map[uint64]*InternalAgent),
 		mmManager:      memSpaceManager,
+		dbClient:       client,
 	}
 }
 
@@ -23,7 +26,8 @@ func (am *AgentManager) RegisterInternalAgent(id uint64, chatSeverAddr, embeddin
 	if _, exists := am.internalAgents[id]; exists {
 		return nil, fmt.Errorf("agent with id %d already exists", id)
 	}
-	agent := NewInternalAgent(id, chatSeverAddr, embeddingServerAddr, character, work, am.mmManager)
+	agent := NewInternalAgent(id, chatSeverAddr, embeddingServerAddr,
+		character, work, am.mmManager, am.dbClient)
 	am.internalAgents[id] = agent
 	return agent, nil
 }

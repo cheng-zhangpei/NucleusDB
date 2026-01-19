@@ -11,6 +11,7 @@ type AgentResponse struct {
 	Content     string `json:"content"`      // 核心回复内容
 	TargetTopic string `json:"target_topic"` // 路由目标 Topic
 	TargetAgent string `json:"target_agent"` // 路由目标 Agent (新增字段)
+	TargetSpace string `json:"target_space"` // 记忆空间的key
 }
 
 func parseLLMResponse(rawResponse string) *AgentResponse {
@@ -43,19 +44,30 @@ func parseLLMResponse(rawResponse string) *AgentResponse {
 		// 如果解析失败，我们假设整个 rawResponse 都是 content，并路由到通用频道
 		return &AgentResponse{
 			Content:     rawResponse, // 保留原始回复
-			TargetTopic: "general",   // 默认 Topic
+			TargetTopic: "nil",       // 默认 Topic
 			TargetAgent: "nil",       // 默认 Agent
+			TargetSpace: "nil",       // 默认 Agent
 		}
 	}
 
 	// 5. 字段默认值修正
 	// 如果 LLM 漏填了某些字段，给它们默认值
 	if resp.TargetTopic == "" {
-		resp.TargetTopic = "general"
+		resp.TargetTopic = "nil"
 	}
 	if resp.TargetAgent == "" {
 		resp.TargetAgent = "nil"
 	}
-
+	if resp.TargetSpace == "" {
+		resp.TargetSpace = "nil"
+	}
 	return &resp
+}
+
+func MarshalCommunicationUnits(units []*CommunicationUnit) (string, error) {
+	data, err := json.Marshal(units)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

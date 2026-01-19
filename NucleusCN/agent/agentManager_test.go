@@ -18,7 +18,7 @@ func Test_AgentManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	AgentManager := NewAgentManager(manager)
+	AgentManager := NewAgentManager(manager, "127.0.0.1:31001", 1)
 	agent1, err := AgentManager.RegisterInternalAgent(1, "http://localhost:20001",
 		"http://localhost:20002", "test agent1", "you can response whatever you can")
 	assert.NoError(t, err)

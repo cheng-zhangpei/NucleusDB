@@ -49,8 +49,9 @@ You MUST respond in strict JSON format. Do not output any markdown code blocks (
 The JSON structure must be:
 {
   "content": "Your actual response content goes here.",
-  "target_topic": "Choose a topic from the Communication Network above. If no specific topic fits, use 'general'."
-  "target_agent": "Choose a agent from the Communication Network above. you can just choose one agent,if you do not want to choose,use 'nil',it do not affect you choose the topic."
+  "target_space": "Choose the space where have the target_channel,you should choose the space by giving the publicIndex(spaceIndex in the sys),if you do not want to communication,use 'nil'."
+  "target_topic": "Choose a topic from the Communication Network above(return the topic field). If no specific topic fits, use 'nil'."
+  "target_channel": "Choose a channel from the Communication Network above(return chanId that you choose). you can just choose one channel,if you do not want to choose,use 'nil',it do not affect you choose the topic."
 }
 `
 

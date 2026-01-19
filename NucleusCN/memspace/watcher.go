@@ -2,7 +2,6 @@ package memspace
 
 import (
 	"ComputeNode/msg"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -11,6 +10,7 @@ import (
 // ChannelDescriptor 描述一个信道（Topic）的语义元数据和特征
 // 这是实现“自适应路由”的核心结构
 type ChannelDescriptor struct {
+	chanId      uint64
 	Topic       string
 	Description string // Slow Path: 自然语言描述，用于提供给 LLM 进行决策。例如："讨论后端数据库死锁问题"
 
@@ -24,6 +24,8 @@ type ChannelDescriptor struct {
 
 // Watcher manages communication routing within a shared MemSpace.
 type Watcher struct {
+	//id can be the same with the memspace
+	id uint64
 	// mu protects the routing tables
 	mu sync.RWMutex
 	// 1. Point-to-Point Routing Table (Physical Layer)
@@ -34,24 +36,34 @@ type Watcher struct {
 	// Key: Topic string -> Value: Descriptor
 	topicMetadata map[string]*ChannelDescriptor
 	// 4. Routing Cache (Fast Path Layer)
-	// Key: Content Feature Hash (or simple keyword) -> Value: Target Topic
+	// Key: Content  FeatureHash (or simple keyword) -> Value: Target Topic
+	// todo 先跑通原型，具体设计后面再来
 	routeCache map[string]string
+	prefixKey  string
+	dbClient   *NucleusClient
 }
 
 // ChannelInfo 用于序列化输出
 type ChannelInfo struct {
+	ChanId      uint64 `json:"chanId"`
 	Topic       string `json:"topic"`
 	Description string `json:"description"`
 }
 
 // NewWatcher creates a new Watcher instance
-func NewWatcher() *Watcher {
-	return &Watcher{
+func NewWatcher(agentId uint64, dbClient *NucleusClient) *Watcher {
+	watcher := &Watcher{
+		id:               agentId,
 		p2pChannels:      make(map[uint64]chan *msg.AgentMsg),
 		topicSubscribers: make(map[string][]uint64),
 		topicMetadata:    make(map[string]*ChannelDescriptor), // init
-		routeCache:       make(map[string]string),             // init
+		routeCache:       make(map[string]string),
+		prefixKey:        fmt.Sprintf("communication-%d", agentId),
+		dbClient:         dbClient,
 	}
+	// 需要创建一个default topic
+	watcher.registerTopic("Default", "Default topic of this watcher")
+	return watcher
 }
 
 // ---------------------- Channel Management (P2P Basis) ----------------------
@@ -93,40 +105,40 @@ func (w *Watcher) UnRegisterAgentChannel(agentID uint64) error {
 // ---------------------- Topic Subscription & Metadata ----------------------
 
 // SubscribeTopic 允许 Agent 订阅 Topic
-func (w *Watcher) SubscribeTopic(agentID uint64, topic string) error {
+func (w *Watcher) subscribeTopic(agentID uint64, topic string, agentChannel chan *msg.AgentMsg) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if _, ok := w.p2pChannels[agentID]; !ok {
-		return fmt.Errorf("agent %d not registered", agentID)
+		// 不存在就创建一个加入就好了
+		w.p2pChannels[agentID] = agentChannel
 	}
 
 	subs := w.topicSubscribers[topic]
 	for _, subID := range subs {
 		if subID == agentID {
-			return nil
+			return
 		}
 	}
 	w.topicSubscribers[topic] = append(subs, agentID)
-	return nil
+	return
 }
 
-// RegisterTopicMetadata 允许注册 Topic 的语义描述 (Slow Path 的基础)
-// 例如：RegisterTopicMetadata("db_log", "用于接收所有数据库层面的报错和慢查询日志")
-func (w *Watcher) RegisterTopicMetadata(topic string, description string) {
+func (w *Watcher) registerTopic(topic string, description string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
-	if _, exists := w.topicMetadata[topic]; !exists {
+	if _, exists := w.topicSubscribers[topic]; !exists {
+		w.topicSubscribers[topic] = make([]uint64, 0)
+		if _, exists := w.topicMetadata[topic]; exists {
+			// 不一致的问题
+			delete(w.topicMetadata, topic)
+		}
 		w.topicMetadata[topic] = &ChannelDescriptor{
 			Topic:       topic,
 			Description: description,
 			Keywords:    make([]string, 0), // 初始为空，后续通过 Learn 填充
 			LastActive:  time.Now(),
 		}
-	} else {
-		// Update description if needed
-		w.topicMetadata[topic].Description = description
 	}
 }
 
@@ -168,16 +180,63 @@ func (w *Watcher) LearnRoutingRule(featureKeyword string, targetTopic string) {
 
 // ---------------------- Messaging Operations ----------------------
 
-// SendP2P sends a message directly to a specific agent.
+// Send sends a message directly to a specific agent.
 // 点对点发送：直接查 P2P 表。
-func (w *Watcher) SendP2P(from, to uint64, msg *msg.AgentMsg) error {
-	// 1. Find target channel
-	// 2. Send non-blocking or with timeout
+// Send 重构版：Write Content -> Push Key
+func (w *Watcher) Send(from uint64, to uint64, topic string, content string) error {
+	if topic == "" {
+		topic = "Default"
+	}
+
+	ts := time.Now().UnixNano()
+	// Key: prefix/topic/ts/from
+	key := fmt.Sprintf("%s/%s/%d/%d", w.prefixKey, topic, ts, from)
+
+	// 1. 持久化 (只存 Content 字符串，或者简单的 JSON)
+	// 这里我们直接存 content，简单粗暴
+
+	if err := w.dbClient.DistributePut([]byte(key), []byte(content)); err != nil {
+		return err
+	}
+	time.Sleep(3 * time.Second)
+
+	//if err := w.dbClient.TxnPut([]byte(key), []byte(content)); err != nil {
+	//	return err
+	//}
+	//err := w.dbClient.Commit()
+	//if err != nil {
+	//	return err
+	//}
+	// 2. 构造通知消息 (只包含 Key 和元数据，不包含巨大的 Content)
+	// 我们复用 AgentMsg 结构，但 Content 字段放 Key，或者加一个 Key 字段
+	// 为了不改结构体，我们暂且把 Key 放在 Msg 字段里，或者 Content 里
+	notifyMsg := &msg.AgentMsg{
+		From:  from,
+		To:    to,
+		Topic: topic,
+		// 【关键】这里放 Key，而不是 Content！
+		// 接收方看到这个，知道要去 DB 里拉数据
+		Content: key,
+		Ts:      ts,
+		// 标记一下这是 Notification 还是 Full Payload？
+		// 可以在 AgentMsg 加个 Type 字段，或者约定 Content 以 "key://" 开头
+	}
+
+	// 3. 内存推送
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	if ch, ok := w.p2pChannels[to]; ok {
+		select {
+		case ch <- notifyMsg:
+		default:
+		}
+	}
 	return nil
 }
 
 // PublishTopic broadcasts a message to all agents subscribed to the topic.
-func (w *Watcher) PublishTopic(from uint64, topic string, msg *msg.AgentMsg) error {
+func (w *Watcher) PublishTopic(from uint64, topic string) error {
 	// 1. Find all matching subscribers (Exact match or Prefix match)
 	// 2. Loop through subscribers and send
 	return nil
@@ -192,30 +251,19 @@ func (w *Watcher) BroadcastToAll(from uint64, msg *msg.AgentMsg) error {
 
 // GenerateCommunicationMap generates a snapshot of the current routing topology.
 // Helper function for debugging or for the LLM to understand the network.
-func (w *Watcher) GenerateCommunicationMap() string {
+func (w *Watcher) GenerateCommunicationMap() map[string][]*ChannelInfo {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-
-	var channels []ChannelInfo
+	var channels map[string][]*ChannelInfo
 
 	// 遍历 Topic Metadata
 	for topic, desc := range w.topicMetadata {
-		channels = append(channels, ChannelInfo{
+		channelInfo := &ChannelInfo{
+			ChanId:      desc.chanId,
 			Topic:       topic,
 			Description: desc.Description,
-		})
+		}
+		channels[topic] = append(channels[topic], channelInfo)
 	}
-
-	// 如果没有任何 Metadata，可能是还没注册，我们可以返回一些默认的或者空的 JSON
-	if len(channels) == 0 {
-		return "[]"
-	}
-
-	// 序列化为 JSON 字符串
-	bytes, err := json.MarshalIndent(channels, "", "  ")
-	if err != nil {
-		return "[]" // Fallback
-	}
-
-	return string(bytes)
+	return channels
 }
