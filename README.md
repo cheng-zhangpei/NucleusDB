@@ -5,7 +5,7 @@
 NucleusDB is a distributed key-value database engine designed specifically to address the memory storage and management challenges of Large Language Models (LLMs) in multi-agent collaborative systems. Built from the ground up, it combines the high-performance Bitcask data model with the robust Raft consensus algorithm to provide a reliable, efficient, and scalable solution.
 
 This project originated as an undergraduate thesis and represents a complete end-to-end implementation, progressing from a single-node database to a fully-fledged distributed system with advanced features like distributed transactions.
-
+> This project will no longer be maintained going forward. It will be rebuilt at [NucleusMem](https://github.com/cheng-zhangpei/NucleusMem)
 ## 🌟 Features
 
 *   **Optimized for LLMs:** Provides dedicated memory space management at the database level, including functions for memory search, matching, and AI-driven compression to enhance the efficiency and stability of LLMs.
